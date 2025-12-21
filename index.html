@@ -182,9 +182,6 @@
         gradOuter.addColorStop(1, 'rgba(10, 110, 180, 0.35)');
         ctx.fillStyle = gradOuter;
         ctx.fill();
-        ctx.strokeStyle = 'rgba(180, 210, 240, 0.25)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
       }
 
       // inner faces
@@ -201,9 +198,6 @@
         gradInner.addColorStop(1, 'rgba(30, 140, 230, 0.4)');
         ctx.fillStyle = gradInner;
         ctx.fill();
-        ctx.strokeStyle = 'rgba(200, 230, 255, 0.35)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
       }
 
       // top cap band
@@ -264,9 +258,6 @@
         rampGrad.addColorStop(1, 'rgba(40, 130, 220, 0.25)');
         ctx.fillStyle = rampGrad;
         ctx.fill();
-        ctx.strokeStyle = 'rgba(200, 230, 255, 0.25)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
       }
 
       // Top face
@@ -280,9 +271,6 @@
       ctx.fillStyle = topGrad;
       ctx.fill();
 
-      ctx.strokeStyle = 'rgba(220, 240, 255, 0.3)';
-      ctx.lineWidth = 2;
-      ctx.stroke();
     }
 
     function drawPlane() {
@@ -311,14 +299,6 @@
       ctx.fillRect(0, minY, size.w, maxY - minY);
 
       ctx.restore();
-
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(corners[0].x, corners[0].y);
-      for (let i = 1; i < corners.length; i++) ctx.lineTo(corners[i].x, corners[i].y);
-      ctx.closePath();
-      ctx.stroke();
     }
 
     function drawMarble() {
