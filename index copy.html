@@ -64,16 +64,7 @@
     const marble = {
       r: 25,
       pos: { x: size.w / 2, y: size.h / 2 },
-      vel: { x: 0, y: 0 },
-      z: 0,   // center height in world space
-      vz: 0
-    };
-
-    const pedestal = {
-      topSize: marble.r * 8,    // 4 diameters wide
-      ramp: marble.r * 8,       // ramp length each side
-      height: marble.r * 4,     // 2 diameters tall
-      slopeGravity: 420         // scales slope influence on acceleration
+      vel: { x: 0, y: 0 }
     };
 
     const keys = new Set();
@@ -136,21 +127,6 @@
         projectPoint(size.w / 2 + hx, size.h / 2 + hy, height),
         projectPoint(size.w / 2 - hx, size.h / 2 + hy, height)
       ];
-    }
-
-    function pedestalHeightAt(x, y) {
-      const cx = size.w / 2;
-      const cy = size.h / 2;
-      const halfTop = pedestal.topSize / 2;
-      const ramp = pedestal.ramp;
-      const maxHalf = halfTop + ramp;
-      const dx = Math.abs(x - cx);
-      const dy = Math.abs(y - cy);
-      if (dx > maxHalf || dy > maxHalf) return 0;
-      if (dx <= halfTop && dy <= halfTop) return pedestal.height;
-      const t = Math.max(dx - halfTop, dy - halfTop);
-      const ratio = 1 - Math.min(1, t / ramp);
-      return pedestal.height * ratio;
     }
 
     function drawWalls() {
@@ -223,68 +199,6 @@
       }
     }
 
-    function drawPedestal() {
-      const cx = size.w / 2;
-      const cy = size.h / 2;
-      const halfTop = pedestal.topSize / 2;
-      const halfOuter = halfTop + pedestal.ramp;
-
-      const topCorners = [
-        projectPoint(cx - halfTop, cy - halfTop, pedestal.height),
-        projectPoint(cx + halfTop, cy - halfTop, pedestal.height),
-        projectPoint(cx + halfTop, cy + halfTop, pedestal.height),
-        projectPoint(cx - halfTop, cy + halfTop, pedestal.height)
-      ];
-
-      const baseCorners = [
-        projectPoint(cx - halfOuter, cy - halfOuter, 0),
-        projectPoint(cx + halfOuter, cy - halfOuter, 0),
-        projectPoint(cx + halfOuter, cy + halfOuter, 0),
-        projectPoint(cx - halfOuter, cy + halfOuter, 0)
-      ];
-
-      // Ramps (sides)
-      const faces = [
-        { a: baseCorners[0], b: baseCorners[1], ta: topCorners[0], tb: topCorners[1] }, // top
-        { a: baseCorners[1], b: baseCorners[2], ta: topCorners[1], tb: topCorners[2] }, // right
-        { a: baseCorners[2], b: baseCorners[3], ta: topCorners[2], tb: topCorners[3] }, // bottom
-        { a: baseCorners[3], b: baseCorners[0], ta: topCorners[3], tb: topCorners[0] }  // left
-      ];
-
-      for (const face of faces) {
-        ctx.beginPath();
-        ctx.moveTo(face.a.x, face.a.y);
-        ctx.lineTo(face.b.x, face.b.y);
-        ctx.lineTo(face.tb.x, face.tb.y);
-        ctx.lineTo(face.ta.x, face.ta.y);
-        ctx.closePath();
-
-        const rampGrad = ctx.createLinearGradient(face.a.x, face.a.y, face.ta.x, face.ta.y);
-        rampGrad.addColorStop(0, 'rgba(20, 80, 180, 0.6)');
-        rampGrad.addColorStop(1, 'rgba(40, 130, 220, 0.25)');
-        ctx.fillStyle = rampGrad;
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(200, 230, 255, 0.25)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
-      }
-
-      // Top face
-      ctx.beginPath();
-      ctx.moveTo(topCorners[0].x, topCorners[0].y);
-      for (let i = 1; i < topCorners.length; i++) ctx.lineTo(topCorners[i].x, topCorners[i].y);
-      ctx.closePath();
-      const topGrad = ctx.createRadialGradient(cx, cy, halfTop * 0.2, cx, cy, halfTop * 1.4);
-      topGrad.addColorStop(0, 'rgba(70, 150, 255, 0.45)');
-      topGrad.addColorStop(1, 'rgba(20, 60, 140, 0.7)');
-      ctx.fillStyle = topGrad;
-      ctx.fill();
-
-      ctx.strokeStyle = 'rgba(220, 240, 255, 0.3)';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-    }
-
     function drawPlane() {
       const corners = planeCorners();
       ctx.save();
@@ -322,7 +236,7 @@
     }
 
     function drawMarble() {
-      const projected = projectPoint(marble.pos.x, marble.pos.y, marble.z);
+      const projected = projectPoint(marble.pos.x, marble.pos.y, 0);
       const r = marble.r * projected.scale;
       const x = projected.x;
       const y = projected.y;
@@ -376,14 +290,8 @@
     }
 
     function drawFloorReflection() {
-      const groundH = pedestalHeightAt(marble.pos.x, marble.pos.y) + marble.r;
-      const altitude = Math.max(0, marble.z - groundH);
-      const fade = Math.max(0, 1 - altitude / (marble.r * 4));
-      if (fade <= 0.01) return;
-
-      const groundProj = projectPoint(marble.pos.x, marble.pos.y, groundH);
-      const r = marble.r * groundProj.scale;
-      const projected = groundProj;
+      const projected = projectPoint(marble.pos.x, marble.pos.y, -marble.r * 0.4);
+      const r = marble.r * projected.scale;
       const { w, h } = plane;
       const px = (size.w - w) / 2;
       const py = (size.h - h) / 2;
@@ -392,15 +300,15 @@
 
       if (x < px - marble.r || x > px + w + marble.r || y < py - marble.r || y > py + h + marble.r) return;
 
-      const offsetX = plane.tilt.x * r * 0.35;
-      const offsetY = plane.tilt.y * r * 0.35;
+      const offsetX = plane.tilt.x * r * 0.5;
+      const offsetY = plane.tilt.y * r * 0.5;
 
       ctx.save();
       ctx.translate(projected.x + offsetX, projected.y + offsetY + r * 0.05);
       const g = ctx.createRadialGradient(0, 0, r * 0.08, 0, 0, r * 1.15);
-      g.addColorStop(0, `rgba(200, 235, 255, ${0.6 * fade})`);
-      g.addColorStop(0.4, `rgba(190, 225, 255, ${0.34 * fade})`);
-      g.addColorStop(0.8, `rgba(140, 180, 235, ${0.2 * fade})`);
+      g.addColorStop(0, 'rgba(200, 235, 255, 0.46)');
+      g.addColorStop(0.4, 'rgba(190, 225, 255, 0.26)');
+      g.addColorStop(0.8, 'rgba(140, 180, 235, 0.14)');
       g.addColorStop(1, 'rgba(0, 0, 0, 0)');
       ctx.fillStyle = g;
       ctx.beginPath();
@@ -431,46 +339,20 @@
     }
 
     function updatePhysics(dt) {
-      const tiltAccel = 240;
-      const groundHeight = pedestalHeightAt(marble.pos.x, marble.pos.y) + marble.r;
-      const altitude = marble.z - groundHeight;
-      const support = Math.max(0, Math.min(1, 1 - altitude / (marble.r * 1.5))); // 1 on ground, fades in air
+      const gravity = 300; // px per second^2 scaled by tilt
+      const friction = 1;
 
-      let ax = -tiltAccel * Math.sin(plane.tilt.x) * (0.35 + 0.65 * support);
-      let ay = -tiltAccel * Math.sin(plane.tilt.y) * (0.35 + 0.65 * support);
-
-      // Add slope acceleration from pedestal heightfield (negative gradient), scaled by support
-      const eps = 2;
-      const dhdx = (pedestalHeightAt(marble.pos.x + eps, marble.pos.y) - pedestalHeightAt(marble.pos.x - eps, marble.pos.y)) / (2 * eps);
-      const dhdy = (pedestalHeightAt(marble.pos.x, marble.pos.y + eps) - pedestalHeightAt(marble.pos.x, marble.pos.y - eps)) / (2 * eps);
-      const slopeScale = pedestal.slopeGravity * support;
-      const sax = -slopeScale * dhdx;
-      const say = -slopeScale * dhdy;
-      ax += sax;
-      ay += say;
+      const ax = -gravity * Math.sin(plane.tilt.x);
+      const ay = -gravity * Math.sin(plane.tilt.y);
 
       marble.vel.x += ax * dt;
       marble.vel.y += ay * dt;
 
-      const frictionGround = 0.9975;
-      const frictionAir = 0.999;
-      const friction = support > 0.5 ? frictionGround : frictionAir;
       marble.vel.x *= friction;
       marble.vel.y *= friction;
 
       marble.pos.x += marble.vel.x * dt;
       marble.pos.y += marble.vel.y * dt;
-
-      // vertical motion
-      const gravityZ = 900;
-      marble.vz -= gravityZ * dt;
-      marble.z += marble.vz * dt;
-
-      const newGround = pedestalHeightAt(marble.pos.x, marble.pos.y) + marble.r;
-      if (marble.z <= newGround) {
-        marble.z = newGround;
-        if (marble.vz < 0) marble.vz = 0;
-      }
 
       const { w, h } = plane;
       const minX = (size.w - w) / 2 + marble.r;
@@ -495,7 +377,6 @@
       ctx.clearRect(0, 0, size.w, size.h);
       drawStars();
       drawPlane();
-      drawPedestal();
       drawWalls();
       drawFloorReflection();
       drawMarble();
@@ -509,8 +390,6 @@
     }
 
     initStars();
-    // Start marble on top of the pedestal
-    marble.z = pedestalHeightAt(marble.pos.x, marble.pos.y) + marble.r;
     setupInput();
     requestAnimationFrame(frame);
   </script>
