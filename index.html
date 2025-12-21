@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Marbl</title>
+  <style>
+    :root {
+      --bg: #050915;
+      --plane-base: #0f4ea8;
+      --plane-highlight: #71c5ff;
+      --marble-highlight: #dbe0e8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      display: grid;
+      place-items: center;
+      background: radial-gradient(circle at 30% 20%, #0c1224 0%, var(--bg) 55%);
+      color: #e5ecff;
+      font-family: "Inter", system-ui, -apple-system, sans-serif;
+      height: 100vh;
+    }
+    canvas {
+      width: 1024px;
+      height: 1024px;
+      image-rendering: smooth;
+      background: transparent;
+    }
+    .hud {
+      position: absolute;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      letter-spacing: 0.08em;
+      font-size: 12px;
+      text-transform: uppercase;
+      color: rgba(229, 236, 255, 0.6);
+      pointer-events: none;
+      text-shadow: 0 1px 8px rgba(0,0,0,0.35);
+    }
+  </style>
+</head>
+<body>
+  <div class="hud">WASD to tilt the plane</div>
+  <canvas id="c" width="1024" height="1024"></canvas>
+  <script>
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+
+    const size = { w: canvas.width, h: canvas.height };
+    const plane = {
+      w: 920,
+      h: 920,
+      tilt: { x: 0, y: 0 },
+      targetTilt: { x: 0, y: 0 },
+      maxTilt: 0.8 // radians-ish; just visual + physics scale
+    };
+
+    const camera = { z: 1400 };
+
+    const marble = {
+      r: 25,
+      pos: { x: size.w / 2, y: size.h / 2 },
+      vel: { x: 0, y: 0 }
+    };
+
+    const keys = new Set();
+    const stars = [];
+
+    function initStars() {
+      const count = 250;
+      for (let i = 0; i < count; i++) {
+        stars.push({
+          x: Math.random() * size.w,
+          y: Math.random() * size.h,
+          r: Math.random() * 1.2 + 0.4,
+          a: Math.random() * 0.5 + 0.3
+        });
+      }
+    }
+
+    function drawStars() {
+      ctx.fillStyle = 'transparent';
+      for (const s of stars) {
+        ctx.beginPath();
+        ctx.fillStyle = `rgba(255, 255, 255, ${s.a})`;
+        ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    function projectPoint(px, py, pz = 0) {
+      const dx = px - size.w / 2;
+      const dy = py - size.h / 2;
+      const rx = plane.tilt.y * 0.35; // pitch
+      const ry = -plane.tilt.x * 0.35; // roll
+
+      // rotate around X (affects y, z)
+      const cosRx = Math.cos(rx);
+      const sinRx = Math.sin(rx);
+      const y1 = dy * cosRx - pz * sinRx;
+      const z1 = dy * sinRx + pz * cosRx;
+
+      // rotate around Y (affects x, z)
+      const cosRy = Math.cos(ry);
+      const sinRy = Math.sin(ry);
+      const x2 = dx * cosRy + z1 * sinRy;
+      const z2 = -dx * sinRy + z1 * cosRy;
+
+      const scale = camera.z / (camera.z - z2);
+      return {
+        x: x2 * scale + size.w / 2,
+        y: y1 * scale + size.h / 2,
+        scale
+      };
+    }
+
+    function planeCorners() {
+      const hx = plane.w / 2;
+      const hy = plane.h / 2;
+      return [
+        projectPoint(size.w / 2 - hx, size.h / 2 - hy),
+        projectPoint(size.w / 2 + hx, size.h / 2 - hy),
+        projectPoint(size.w / 2 + hx, size.h / 2 + hy),
+        projectPoint(size.w / 2 - hx, size.h / 2 + hy)
+      ];
+    }
+
+    function drawPlane() {
+      const corners = planeCorners();
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(corners[0].x, corners[0].y);
+      for (let i = 1; i < corners.length; i++) ctx.lineTo(corners[i].x, corners[i].y);
+      ctx.closePath();
+      ctx.clip();
+
+      const minY = Math.min(...corners.map(c => c.y));
+      const maxY = Math.max(...corners.map(c => c.y));
+      const g = ctx.createLinearGradient(0, minY, 0, maxY);
+      g.addColorStop(0, '#0d3576');
+      g.addColorStop(0.35, '#1251b3');
+      g.addColorStop(0.7, '#0d3576');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, minY, size.w, maxY - minY);
+
+      const shine = ctx.createLinearGradient(0, minY, 0, maxY);
+      shine.addColorStop(0, 'rgba(160, 210, 255, 0.25)');
+      shine.addColorStop(0.3, 'rgba(160, 210, 255, 0.05)');
+      shine.addColorStop(1, 'rgba(160, 210, 255, 0)');
+      ctx.fillStyle = shine;
+      ctx.fillRect(0, minY, size.w, maxY - minY);
+
+      ctx.restore();
+
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(corners[0].x, corners[0].y);
+      for (let i = 1; i < corners.length; i++) ctx.lineTo(corners[i].x, corners[i].y);
+      ctx.closePath();
+      ctx.stroke();
+    }
+
+    function drawMarble() {
+      const projected = projectPoint(marble.pos.x, marble.pos.y, 0);
+      const r = marble.r * projected.scale;
+      const x = projected.x;
+      const y = projected.y;
+
+      const g = ctx.createRadialGradient(
+        x - r * 0.3, y - r * 0.35, r * 0.1,
+        x, y, r * 1.1
+      );
+      g.addColorStop(0, 'rgba(255, 255, 255, 0.95)');
+      g.addColorStop(0.25, '#cfd4dc');
+      g.addColorStop(0.6, '#9ea6b2');
+      g.addColorStop(1, '#5d6570');
+
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
+      ctx.shadowBlur = 10;
+      ctx.shadowOffsetY = 6 * projected.scale;
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      const reflection = ctx.createLinearGradient(x - r, y - r, x + r, y + r);
+      reflection.addColorStop(0, 'rgba(255, 255, 255, 0.12)');
+      reflection.addColorStop(0.5, 'rgba(255, 255, 255, 0)');
+      reflection.addColorStop(1, 'rgba(255, 255, 255, 0.18)');
+      ctx.fillStyle = reflection;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function drawFloorReflection() {
+      const projected = projectPoint(marble.pos.x, marble.pos.y, 0);
+      const r = marble.r * projected.scale;
+      const { w, h } = plane;
+      const px = (size.w - w) / 2;
+      const py = (size.h - h) / 2;
+      const x = marble.pos.x;
+      const y = marble.pos.y;
+
+      if (x < px - marble.r || x > px + w + marble.r || y < py - marble.r || y > py + h + marble.r) return;
+
+      const g = ctx.createRadialGradient(projected.x, projected.y + r * 0.5, 4, projected.x, projected.y + r, r * 1.8);
+      g.addColorStop(0, 'rgba(180, 220, 255, 0.18)');
+      g.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.ellipse(projected.x, projected.y + r * 0.5, r * 1.6, r * 0.7, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function updateInput(dt) {
+      const target = plane.targetTilt;
+      target.x = 0;
+      target.y = 0;
+
+      if (keys.has('KeyA')) target.x += 1;
+      if (keys.has('KeyD')) target.x -= 1;
+      if (keys.has('KeyW')) target.y += 1;
+      if (keys.has('KeyS')) target.y -= 1;
+
+      const len = Math.hypot(target.x, target.y);
+      if (len > 1) {
+        target.x /= len;
+        target.y /= len;
+      }
+
+      const smoothing = 12;
+      plane.tilt.x += (target.x * plane.maxTilt - plane.tilt.x) * dt * smoothing;
+      plane.tilt.y += (target.y * plane.maxTilt - plane.tilt.y) * dt * smoothing;
+    }
+
+    function updatePhysics(dt) {
+      const gravity = 300; // px per second^2 scaled by tilt
+      const friction = 1;
+
+      const ax = -gravity * Math.sin(plane.tilt.x);
+      const ay = -gravity * Math.sin(plane.tilt.y);
+
+      marble.vel.x += ax * dt;
+      marble.vel.y += ay * dt;
+
+      marble.vel.x *= friction;
+      marble.vel.y *= friction;
+
+      marble.pos.x += marble.vel.x * dt;
+      marble.pos.y += marble.vel.y * dt;
+
+      const { w, h } = plane;
+      const minX = (size.w - w) / 2 + marble.r;
+      const maxX = (size.w + w) / 2 - marble.r;
+      const minY = (size.h - h) / 2 + marble.r;
+      const maxY = (size.h + h) / 2 - marble.r;
+
+      if (marble.pos.x < minX) { marble.pos.x = minX; marble.vel.x *= -0.6; }
+      if (marble.pos.x > maxX) { marble.pos.x = maxX; marble.vel.x *= -0.6; }
+      if (marble.pos.y < minY) { marble.pos.y = minY; marble.vel.y *= -0.6; }
+      if (marble.pos.y > maxY) { marble.pos.y = maxY; marble.vel.y *= -0.6; }
+    }
+
+    function frame(time) {
+      const now = time * 0.001;
+      const dt = Math.min(0.033, now - (frame.last || now));
+      frame.last = now;
+
+      updateInput(dt);
+      updatePhysics(dt);
+
+      ctx.clearRect(0, 0, size.w, size.h);
+      drawStars();
+      drawPlane();
+      drawFloorReflection();
+      drawMarble();
+
+      requestAnimationFrame(frame);
+    }
+
+    function setupInput() {
+      window.addEventListener('keydown', (e) => keys.add(e.code));
+      window.addEventListener('keyup', (e) => keys.delete(e.code));
+    }
+
+    initStars();
+    setupInput();
+    requestAnimationFrame(frame);
+  </script>
+</body>
+</html>
