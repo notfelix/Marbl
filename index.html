@@ -665,6 +665,7 @@
     const history = [];
     const maxHistoryFrames = 900; // ~15s at 60fps
     let orbAnimTime = 0;
+    let debugSkippedOrbBatches = 0;
     let currentSupport = null;
 
     function captureState() {
@@ -759,6 +760,19 @@
           orb.dissolve = Math.min(1, (orb.dissolve || 0) + dt * 2.5);
         }
       }
+    }
+
+    function skipNextOrbBatch() {
+      const batchSize = orbConfig.count;
+      const start = debugSkippedOrbBatches * batchSize;
+      if (start >= orbs.length) return;
+      const end = Math.min(orbs.length, start + batchSize);
+      for (let i = start; i < end; i++) {
+        orbs[i].collected = true;
+        orbs[i].dissolve = 1;
+      }
+      debugSkippedOrbBatches++;
+      console.log(`Debug: skipped orb batch ${debugSkippedOrbBatches}`);
     }
 
     function centralCollapseEase() {
@@ -1258,7 +1272,13 @@
     }
 
     function setupInput() {
-      window.addEventListener('keydown', (e) => keys.add(e.code));
+      window.addEventListener('keydown', (e) => {
+        if (!e.repeat && (e.code === 'Digit0' || e.code === 'Numpad0')) {
+          skipNextOrbBatch();
+          return;
+        }
+        keys.add(e.code);
+      });
       window.addEventListener('keyup', (e) => keys.delete(e.code));
     }
 
