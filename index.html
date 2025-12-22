@@ -1164,11 +1164,13 @@
       const planeY = Number.isFinite(surfaceY) ? surfaceY : (marble.y - marble.r);
       const normal = levelNormalAt(supportLevel, marble.pos.x, marble.pos.z);
       const orient = mat4FromNormal(normal);
+      const deltaY = Number.isFinite(surfaceY) ? marble.y - (surfaceY + marble.r) : Infinity; // >0 above plane, <0 below
+      const altitudeForFx = deltaY > 0 ? deltaY : Infinity; // hide shadow/reflection once we fall through
       // Soft blob shadow aligned to surface
       const shadowOffset = 1.2;
       const altitude = isAirborne()
-        ? (Number.isFinite(surfaceY) ? marble.y - (surfaceY + marble.r) : Infinity)
-        : (Number.isFinite(currentSupport?.altitude) ? currentSupport.altitude : (Number.isFinite(surfaceY) ? marble.y - (surfaceY + marble.r) : Infinity));
+        ? altitudeForFx
+        : (Number.isFinite(currentSupport?.altitude) ? currentSupport.altitude : altitudeForFx);
       const shadowStrength = Number.isFinite(altitude) ? Math.max(0, Math.min(1, 1 - Math.max(0, altitude) / (marble.r * 2.5))) : 0;
       let shadowM = boardM;
       shadowM = mat4Translate(shadowM, [marble.pos.x, planeY - levelY + shadowOffset, marble.pos.z]);
@@ -1177,12 +1179,14 @@
       drawMesh(meshes.marble, shadowM, [0,0,0], [0,0,0], 0.38 * shadowStrength);
       // Reflection (mirror across the local surface plane)
       const distanceAbove = marble.y - planeY;
-      const reflectionY = planeY - distanceAbove + 1.2;
-      let reflectionM = boardM;
-      reflectionM = mat4Translate(reflectionM, [marble.pos.x, reflectionY - levelY, marble.pos.z]);
-      reflectionM = mat4Multiply(reflectionM, orient);
-      reflectionM = mat4Scale(reflectionM, [1, -1, 1]);
-      drawMesh(meshes.marble, reflectionM, [0.65,0.7,0.8], [0.05,0.05,0.08], 0.22 * Math.max(0, shadowStrength * 0.58));
+      if (deltaY >= 0) { // only show reflection while above the plane
+        const reflectionY = planeY - distanceAbove + 1.2;
+        let reflectionM = boardM;
+        reflectionM = mat4Translate(reflectionM, [marble.pos.x, reflectionY - levelY, marble.pos.z]);
+        reflectionM = mat4Multiply(reflectionM, orient);
+        reflectionM = mat4Scale(reflectionM, [1, -1, 1]);
+        drawMesh(meshes.marble, reflectionM, [0.65,0.7,0.8], [0.05,0.05,0.08], 0.22 * Math.max(0, shadowStrength * 0.58));
+      }
     }
 
     function drawOrbs(boardM, orbTime, levelIndex=0, alpha=1) {
