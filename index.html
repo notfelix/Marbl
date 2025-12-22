@@ -1217,9 +1217,11 @@
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
       const collapseProgress = centralCollapseEase();
-      const onLowerLevel = (currentSupport?.level?.index ?? 0) > 0 || marble.y < -levelDrop * 0.35;
-      const topFadeBase = centralCollapse.started ? Math.max(0, Math.min(1, 1 + marble.y / (levelDrop * 0.85))) : 1;
-      const topFade = onLowerLevel ? 0 : topFadeBase;
+      const onLowerLevel = (currentSupport?.level?.index ?? 0) > 0;
+      const fadeDepth = levelDrop * 0.75; // fade out as we fall roughly three quarters of a level
+      const topFade = centralCollapse.started
+        ? Math.max(0, Math.min(1, 1 + marble.y / fadeDepth))
+        : 1;
       const holeMask = {
         center: { x: centralPedestalPos.x, y: 0, z: centralPedestalPos.z },
         radius: centralHoleRadius,
