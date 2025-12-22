@@ -301,6 +301,21 @@
       out[14]=-(zx*eye.x + zy*eye.y + zz*eye.z);
       return out;
     }
+    function mat4TransformVec4(m, v){
+      return [
+        m[0]*v[0] + m[4]*v[1] + m[8]*v[2] + m[12]*v[3],
+        m[1]*v[0] + m[5]*v[1] + m[9]*v[2] + m[13]*v[3],
+        m[2]*v[0] + m[6]*v[1] + m[10]*v[2] + m[14]*v[3],
+        m[3]*v[0] + m[7]*v[1] + m[11]*v[2] + m[15]*v[3]
+      ];
+    }
+    function transformDirection(m, v){
+      return normalize3({
+        x: m[0]*v.x + m[4]*v.y + m[8]*v.z,
+        y: m[1]*v.x + m[5]*v.y + m[9]*v.z,
+        z: m[2]*v.x + m[6]*v.y + m[10]*v.z
+      });
+    }
     function mat4Invert(a){
       const out=new Float32Array(16);
       const a00=a[0], a01=a[1], a02=a[2], a03=a[3];
@@ -673,6 +688,11 @@
         pedestalHole: [0.78, 0.32, 0.34]
       }
     };
+    const mouseAttractor = {
+      active: false,
+      target: { x: 0, z: 0 },
+      strength: 480
+    };
     const orbConfig = { r: 12, count: 4, minCenterDistance: 220, touchRadius: 22 };
     const orbs = [];
     const keys = new Set();
@@ -696,6 +716,10 @@
           tilt: { x: plane.tilt.x, y: plane.tilt.y },
           target: { x: plane.targetTilt.x, y: plane.targetTilt.y }
         },
+        mouseAttractor: {
+          active: mouseAttractor.active,
+          target: { x: mouseAttractor.target.x, z: mouseAttractor.target.z }
+        },
         orbs: orbs.map(o => ({ level: o.level, collected: o.collected, dissolve: o.dissolve })),
         stars: stars.map(s => ({ x: s.x, y: s.y, vx: s.vx, vy: s.vy, size: s.size, alpha: s.alpha })),
         centralCollapse: { started: centralCollapse.started, progress: centralCollapse.progress },
@@ -714,6 +738,11 @@
       plane.tilt.y = state.plane.tilt.y;
       plane.targetTilt.x = state.plane.target.x;
       plane.targetTilt.y = state.plane.target.y;
+      if (state.mouseAttractor) {
+        mouseAttractor.active = !!state.mouseAttractor.active;
+        mouseAttractor.target.x = state.mouseAttractor.target?.x ?? mouseAttractor.target.x;
+        mouseAttractor.target.z = state.mouseAttractor.target?.z ?? mouseAttractor.target.z;
+      }
       orbAnimTime = state.orbAnimTime ?? orbAnimTime;
       state.orbs.forEach((o,i) => {
         if (orbs[i]) {
@@ -1058,6 +1087,47 @@
       camera.target.y += (desiredTargetY - camera.target.y) * dt * smooth;
     }
 
+    function screenToBoardXZ(clientX, clientY) {
+      const rect = canvas.getBoundingClientRect();
+      if (!rect.width || !rect.height) return null;
+      const xNdc = ((clientX - rect.left) / rect.width) * 2 - 1;
+      const yNdc = ((rect.bottom - clientY) / rect.height) * 2 - 1;
+
+      const aspect = canvas.width / canvas.height;
+      const proj = mat4Perspective(Math.PI / 4, aspect, 10, 5000);
+      const view = mat4LookAt(camera.pos, camera.target, { x: 0, y: 0, z: 1 });
+      const invVP = mat4Invert(mat4Multiply(proj, view));
+
+      const near = mat4TransformVec4(invVP, [xNdc, yNdc, -1, 1]);
+      const far = mat4TransformVec4(invVP, [xNdc, yNdc, 1, 1]);
+      const nearWorld = { x: near[0] / near[3], y: near[1] / near[3], z: near[2] / near[3] };
+      const farWorld = { x: far[0] / far[3], y: far[1] / far[3], z: far[2] / far[3] };
+      const dir = normalize3({
+        x: farWorld.x - nearWorld.x,
+        y: farWorld.y - nearWorld.y,
+        z: farWorld.z - nearWorld.z
+      });
+
+      const level = getActiveLevel();
+      const planePoint = { x: 0, y: level?.y || 0, z: 0 };
+      const n = boardNormal();
+      const denom = dir.x * n.x + dir.y * n.y + dir.z * n.z;
+      if (Math.abs(denom) < 1e-5) return null;
+      const t = ((planePoint.x - nearWorld.x) * n.x + (planePoint.y - nearWorld.y) * n.y + (planePoint.z - nearWorld.z) * n.z) / denom;
+      if (!Number.isFinite(t) || t < 0) return null;
+
+      const hit = {
+        x: nearWorld.x + dir.x * t,
+        z: nearWorld.z + dir.z * t
+      };
+      const halfW = plane.w * 0.5 - marble.r;
+      const halfH = plane.h * 0.5 - marble.r;
+      return {
+        x: Math.max(-halfW, Math.min(halfW, hit.x)),
+        z: Math.max(-halfH, Math.min(halfH, hit.z))
+      };
+    }
+
     function updatePhysics(dt) {
       const tiltAccel = 240;
       const supportInfo = calculateSupport(marble.pos.x, marble.pos.z, marble.y);
@@ -1080,6 +1150,20 @@
       const slopeScale = pedestal.slopeGravity * support;
       ax += -slopeScale * dhdx;
       az += -slopeScale * dhdz;
+
+      if (mouseAttractor.active) {
+        const dx = mouseAttractor.target.x - marble.pos.x;
+        const dz = mouseAttractor.target.z - marble.pos.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist > 1) {
+          const attractScale = airborne ? 0.35 : 1;
+          const pull = mouseAttractor.strength * Math.min(1, dist / 180) * attractScale;
+          ax += (dx / dist) * pull;
+          az += (dz / dist) * pull;
+        } else {
+          mouseAttractor.active = false;
+        }
+      }
 
       marble.vel.x += ax * dt;
       marble.vel.z += az * dt;
@@ -1167,6 +1251,10 @@
       m = mat4RotateX(m, plane.tilt.y * 0.35);
       m = mat4RotateZ(m, plane.tilt.x * 0.35);
       return m;
+    }
+    function boardNormal() {
+      const m = boardTransform(0);
+      return transformDirection(m, { x: 0, y: 1, z: 0 });
     }
 
     function drawMarbleEffects(boardM) {
@@ -1334,6 +1422,30 @@
         keys.add(e.code);
       });
       window.addEventListener('keyup', (e) => keys.delete(e.code));
+      function setAttractorFromEvent(e) {
+        const target = screenToBoardXZ(e.clientX, e.clientY);
+        if (!target) return false;
+        mouseAttractor.active = true;
+        mouseAttractor.target.x = target.x;
+        mouseAttractor.target.z = target.z;
+        return true;
+      }
+      canvas.addEventListener('pointerdown', (e) => {
+        if (setAttractorFromEvent(e) && canvas.setPointerCapture) {
+          canvas.setPointerCapture(e.pointerId);
+        }
+      });
+      canvas.addEventListener('pointermove', (e) => {
+        if (!mouseAttractor.active) return;
+        setAttractorFromEvent(e);
+      });
+      function stopAttractor(e) {
+        mouseAttractor.active = false;
+        if (e && canvas.releasePointerCapture) canvas.releasePointerCapture(e.pointerId);
+      }
+      canvas.addEventListener('pointerup', stopAttractor);
+      canvas.addEventListener('pointercancel', stopAttractor);
+      canvas.addEventListener('pointerleave', () => { mouseAttractor.active = false; });
     }
 
     marble.y = levelHeightAt(levels[0], marble.pos.x, marble.pos.z) + marble.r;
