@@ -659,6 +659,20 @@
       { y: -levelDrop, applyCollapse: false, hasHole: false }
     ];
     levels.forEach((lvl, i) => lvl.index = i);
+    const boardColors = {
+      top: {
+        floor: [0.07, 0.28, 0.7],
+        wall: [0.08, 0.22, 0.6],
+        pedestal: [0.1, 0.35, 0.8],
+        pedestalHole: [0.05, 0.18, 0.5]
+      },
+      bottom: {
+        floor: [0.78, 0.32, 0.34],
+        wall: [0.78, 0.32, 0.34],
+        pedestal: [0.78, 0.32, 0.34],
+        pedestalHole: [0.78, 0.32, 0.34]
+      }
+    };
     const orbConfig = { r: 12, count: 4, minCenterDistance: 220, touchRadius: 22 };
     const orbs = [];
     const keys = new Set();
@@ -1274,14 +1288,12 @@
         }
       }
 
-      const wallColorTop=[0.08,0.22,0.6];
-      const wallColorBottom=[0.06,0.18,0.5];
       for (const entry of boardEntries) {
         const { level, matrix, mask } = entry;
-        const floorColor = level === levels[0] ? [0.07, 0.28, 0.7] : [0.06, 0.24, 0.62];
+        const palette = level === levels[0] ? boardColors.top : boardColors.bottom;
         gl.depthMask(entry.alpha >= 0.999);
-        drawMesh(meshes.floor, matrix, floorColor, [0.04,0.06,0.1], entry.alpha, level.hasHole ? mask : null);
-        const wallColor = level === levels[0] ? wallColorTop : wallColorBottom;
+        drawMesh(meshes.floor, matrix, palette.floor, [0.04,0.06,0.1], entry.alpha, level.hasHole ? mask : null);
+        const wallColor = palette.wall;
         for(const w of meshes.walls) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
         for(let i=0;i<pedestalPositions.length;i++){
           const p = pedestalPositions[i];
@@ -1292,7 +1304,7 @@
           let pedM = matrix;
           pedM = mat4Translate(pedM, [p.x, 0, p.z]);
           pedM = mat4Scale(pedM, [1, height / pedestal.height, 1]);
-          const pedColor = (isCentral && collapseProgress > 0) ? [0.05,0.18,0.5] : [0.1,0.35,0.8];
+          const pedColor = (isCentral && collapseProgress > 0) ? palette.pedestalHole : palette.pedestal;
           drawMesh(pedMesh, pedM, pedColor, [0.05,0.06,0.1], pedAlpha);
         }
         drawOrbs(matrix, orbAnimTime, level.index, entry.alpha);
