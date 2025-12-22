@@ -3,13 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Marbl</title>
+  <title>Marbl (WebGL)</title>
   <style>
     :root {
       --bg: #050915;
-      --plane-base: #0f4ea8;
-      --plane-highlight: #71c5ff;
-      --marble-highlight: #dbe0e8;
     }
     * { box-sizing: border-box; }
     body {
@@ -24,8 +21,8 @@
     canvas {
       width: 1024px;
       height: 1024px;
-      image-rendering: smooth;
       background: transparent;
+      display: block;
     }
     .hud {
       position: absolute;
@@ -46,365 +43,488 @@
   <canvas id="c" width="1024" height="1024"></canvas>
   <script>
     const canvas = document.getElementById('c');
-    const ctx = canvas.getContext('2d');
+    const gl = canvas.getContext('webgl2', { antialias: true, alpha: true });
+    if (!gl) {
+      alert('WebGL2 not supported');
+      throw new Error('WebGL2 not supported');
+    }
 
-    const size = { w: canvas.width, h: canvas.height };
+    // HiDPI handling
+    function resize() {
+      const dpr = window.devicePixelRatio || 1;
+      const displayW = 1024;
+      const displayH = 1024;
+      canvas.style.width = `${displayW}px`;
+      canvas.style.height = `${displayH}px`;
+      canvas.width = displayW * dpr;
+      canvas.height = displayH * dpr;
+      gl.viewport(0, 0, canvas.width, canvas.height);
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    // Math helpers
+    function normalize3(v) {
+      const len = Math.hypot(v.x, v.y, v.z || 0) || 1;
+      return { x: v.x / len, y: v.y / len, z: (v.z || 0) / len };
+    }
+    function mat4Identity() {
+      const out = new Float32Array(16);
+      out[0]=1; out[5]=1; out[10]=1; out[15]=1;
+      return out;
+    }
+    function mat4Multiply(a,b){
+      const out=new Float32Array(16);
+      const a00=a[0], a01=a[1], a02=a[2], a03=a[3];
+      const a10=a[4], a11=a[5], a12=a[6], a13=a[7];
+      const a20=a[8], a21=a[9], a22=a[10],a23=a[11];
+      const a30=a[12],a31=a[13],a32=a[14],a33=a[15];
+
+      const b00=b[0], b01=b[1], b02=b[2], b03=b[3];
+      const b10=b[4], b11=b[5], b12=b[6], b13=b[7];
+      const b20=b[8], b21=b[9], b22=b[10],b23=b[11];
+      const b30=b[12],b31=b[13],b32=b[14],b33=b[15];
+
+      out[0]=a00*b00 + a10*b01 + a20*b02 + a30*b03;
+      out[1]=a01*b00 + a11*b01 + a21*b02 + a31*b03;
+      out[2]=a02*b00 + a12*b01 + a22*b02 + a32*b03;
+      out[3]=a03*b00 + a13*b01 + a23*b02 + a33*b03;
+
+      out[4]=a00*b10 + a10*b11 + a20*b12 + a30*b13;
+      out[5]=a01*b10 + a11*b11 + a21*b12 + a31*b13;
+      out[6]=a02*b10 + a12*b11 + a22*b12 + a32*b13;
+      out[7]=a03*b10 + a13*b11 + a23*b12 + a33*b13;
+
+      out[8]=a00*b20 + a10*b21 + a20*b22 + a30*b23;
+      out[9]=a01*b20 + a11*b21 + a21*b22 + a31*b23;
+      out[10]=a02*b20 + a12*b21 + a22*b22 + a32*b23;
+      out[11]=a03*b20 + a13*b21 + a23*b22 + a33*b23;
+
+      out[12]=a00*b30 + a10*b31 + a20*b32 + a30*b33;
+      out[13]=a01*b30 + a11*b31 + a21*b32 + a31*b33;
+      out[14]=a02*b30 + a12*b31 + a22*b32 + a32*b33;
+      out[15]=a03*b30 + a13*b31 + a23*b32 + a33*b33;
+      return out;
+    }
+    function mat4Translate(m,[x,y,z]){
+      const out = mat4Identity();
+      out[12]=x; out[13]=y; out[14]=z;
+      return mat4Multiply(m,out);
+    }
+    function mat4Scale(m,[x,y,z]){
+      const out = mat4Identity();
+      out[0]=x; out[5]=y; out[10]=z;
+      return mat4Multiply(m,out);
+    }
+    function mat4RotateX(m,rad){
+      const c=Math.cos(rad),s=Math.sin(rad);
+      const r=mat4Identity();
+      r[5]=c; r[9]=-s; r[6]=s; r[10]=c;
+      return mat4Multiply(m,r);
+    }
+    function mat4RotateZ(m,rad){
+      const c=Math.cos(rad),s=Math.sin(rad);
+      const r=mat4Identity();
+      r[0]=c; r[4]=-s; r[1]=s; r[5]=c;
+      return mat4Multiply(m,r);
+    }
+    function mat4Perspective(fov,aspect,near,far){
+      const f=1/Math.tan(fov/2);
+      const nf=1/(near-far);
+      const out=new Float32Array(16);
+      out[0]=f/aspect;
+      out[5]=f;
+      out[10]=(far+near)*nf;
+      out[11]=-1;
+      out[14]=(2*far*near)*nf;
+      out[15]=0;
+      out[1]=out[2]=out[3]=out[4]=out[6]=out[7]=out[8]=out[9]=out[12]=out[13]=0;
+      return out;
+    }
+    function mat4FromNormal(n){
+      // Build a basis where Y aligns with the surface normal
+      let tangent = { x: n.z, y: 0, z: -n.x };
+      let len = Math.hypot(tangent.x, tangent.y, tangent.z);
+      if (len < 1e-3) tangent = { x: 1, y: 0, z: 0 };
+      else tangent = { x: tangent.x/len, y: tangent.y/len, z: tangent.z/len };
+      const bitangent = normalize3({
+        x: n.y * tangent.z - n.z * tangent.y,
+        y: n.z * tangent.x - n.x * tangent.z,
+        z: n.x * tangent.y - n.y * tangent.x
+      });
+      const out = mat4Identity();
+      out[0]=tangent.x; out[1]=tangent.y; out[2]=tangent.z;
+      out[4]=n.x; out[5]=n.y; out[6]=n.z;
+      out[8]=bitangent.x; out[9]=bitangent.y; out[10]=bitangent.z;
+      return out;
+    }
+    function mat4LookAt(eye, target, up){
+      // Forward from eye toward target (camera look direction)
+      let zx=eye.x-target.x, zy=eye.y-target.y, zz=eye.z-target.z;
+      let len=Math.hypot(zx,zy,zz);
+      if(len===0){zz=1; len=1;}
+      zx/=len; zy/=len; zz/=len;
+      // Right = forward x up
+      let xx=up.y*zz-up.z*zy;
+      let xy=up.z*zx-up.x*zz;
+      let xz=up.x*zy-up.y*zx;
+      len=Math.hypot(xx,xy,xz)||1;
+      xx/=len; xy/=len; xz/=len;
+      // Recomputed up = right x forward
+      const yx=zy*xz-zz*xy;
+      const yy=zz*xx-zx*xz;
+      const yz=zx*xy-zy*xx;
+      const out=mat4Identity();
+      out[0]=xx; out[1]=xy; out[2]=xz;
+      out[4]=yx; out[5]=yy; out[6]=yz;
+      out[8]=zx; out[9]=zy; out[10]=zz;
+      out[12]=-(xx*eye.x + xy*eye.y + xz*eye.z);
+      out[13]=-(yx*eye.x + yy*eye.y + yz*eye.z);
+      out[14]=-(zx*eye.x + zy*eye.y + zz*eye.z);
+      return out;
+    }
+    function mat4Invert(a){
+      const out=new Float32Array(16);
+      const a00=a[0], a01=a[1], a02=a[2], a03=a[3];
+      const a10=a[4], a11=a[5], a12=a[6], a13=a[7];
+      const a20=a[8], a21=a[9], a22=a[10], a23=a[11];
+      const a30=a[12],a31=a[13],a32=a[14],a33=a[15];
+
+      const b00 = a00 * a11 - a01 * a10;
+      const b01 = a00 * a12 - a02 * a10;
+      const b02 = a00 * a13 - a03 * a10;
+      const b03 = a01 * a12 - a02 * a11;
+      const b04 = a01 * a13 - a03 * a11;
+      const b05 = a02 * a13 - a03 * a12;
+      const b06 = a20 * a31 - a21 * a30;
+      const b07 = a20 * a32 - a22 * a30;
+      const b08 = a20 * a33 - a23 * a30;
+      const b09 = a21 * a32 - a22 * a31;
+      const b10 = a21 * a33 - a23 * a31;
+      const b11 = a22 * a33 - a23 * a32;
+
+      let det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
+      if (!det) return mat4Identity();
+      det = 1.0 / det;
+
+      out[0]  = ( a11 * b11 - a12 * b10 + a13 * b09) * det;
+      out[1]  = (-a01 * b11 + a02 * b10 - a03 * b09) * det;
+      out[2]  = ( a31 * b05 - a32 * b04 + a33 * b03) * det;
+      out[3]  = (-a21 * b05 + a22 * b04 - a23 * b03) * det;
+      out[4]  = (-a10 * b11 + a12 * b08 - a13 * b07) * det;
+      out[5]  = ( a00 * b11 - a02 * b08 + a03 * b07) * det;
+      out[6]  = (-a30 * b05 + a32 * b02 - a33 * b01) * det;
+      out[7]  = ( a20 * b05 - a22 * b02 + a23 * b01) * det;
+      out[8]  = ( a10 * b10 - a11 * b08 + a13 * b06) * det;
+      out[9]  = (-a00 * b10 + a01 * b08 - a03 * b06) * det;
+      out[10] = ( a30 * b04 - a31 * b02 + a33 * b00) * det;
+      out[11] = (-a20 * b04 + a21 * b02 - a23 * b00) * det;
+      out[12] = (-a10 * b09 + a11 * b07 - a12 * b06) * det;
+      out[13] = ( a00 * b09 - a01 * b07 + a02 * b06) * det;
+      out[14] = (-a30 * b03 + a31 * b01 - a32 * b00) * det;
+      out[15] = ( a20 * b03 - a21 * b01 + a22 * b00) * det;
+      return out;
+    }
+    function mat4Invert(a){
+      const out=new Float32Array(16);
+      const a00=a[0], a01=a[1], a02=a[2], a03=a[3];
+      const a10=a[4], a11=a[5], a12=a[6], a13=a[7];
+      const a20=a[8], a21=a[9], a22=a[10], a23=a[11];
+      const a30=a[12], a31=a[13], a32=a[14], a33=a[15];
+
+      const b00 = a00 * a11 - a01 * a10;
+      const b01 = a00 * a12 - a02 * a10;
+      const b02 = a00 * a13 - a03 * a10;
+      const b03 = a01 * a12 - a02 * a11;
+      const b04 = a01 * a13 - a03 * a11;
+      const b05 = a02 * a13 - a03 * a12;
+      const b06 = a20 * a31 - a21 * a30;
+      const b07 = a20 * a32 - a22 * a30;
+      const b08 = a20 * a33 - a23 * a30;
+      const b09 = a21 * a32 - a22 * a31;
+      const b10 = a21 * a33 - a23 * a31;
+      const b11 = a22 * a33 - a23 * a32;
+
+      let det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
+      if (!det) return mat4Identity();
+      det = 1.0 / det;
+
+      out[0] = ( a11 * b11 - a12 * b10 + a13 * b09) * det;
+      out[1] = (-a01 * b11 + a02 * b10 - a03 * b09) * det;
+      out[2] = ( a31 * b05 - a32 * b04 + a33 * b03) * det;
+      out[3] = (-a21 * b05 + a22 * b04 - a23 * b03) * det;
+      out[4] = (-a10 * b11 + a12 * b08 - a13 * b07) * det;
+      out[5] = ( a00 * b11 - a02 * b08 + a03 * b07) * det;
+      out[6] = (-a30 * b05 + a32 * b02 - a33 * b01) * det;
+      out[7] = ( a20 * b05 - a22 * b02 + a23 * b01) * det;
+      out[8] = ( a10 * b10 - a11 * b08 + a13 * b06) * det;
+      out[9] = (-a00 * b10 + a01 * b08 - a03 * b06) * det;
+      out[10]= ( a30 * b04 - a31 * b02 + a33 * b00) * det;
+      out[11]= (-a20 * b04 + a21 * b02 - a23 * b00) * det;
+      out[12]= (-a10 * b09 + a11 * b07 - a12 * b06) * det;
+      out[13]= ( a00 * b09 - a01 * b07 + a02 * b06) * det;
+      out[14]= (-a30 * b03 + a31 * b01 - a32 * b00) * det;
+      out[15]= ( a20 * b03 - a21 * b01 + a22 * b00) * det;
+      return out;
+    }
+    function mat4Transpose(m){
+      const out=new Float32Array(16);
+      out[0]=m[0]; out[1]=m[4]; out[2]=m[8]; out[3]=m[12];
+      out[4]=m[1]; out[5]=m[5]; out[6]=m[9]; out[7]=m[13];
+      out[8]=m[2]; out[9]=m[6]; out[10]=m[10]; out[11]=m[14];
+      out[12]=m[3]; out[13]=m[7]; out[14]=m[11]; out[15]=m[15];
+      return out;
+    }
+
+    // Geometry
+    function createBox(minX,maxX,minY,maxY,minZ,maxZ){
+      const positions=[
+        minX,minY,maxZ,  maxX,minY,maxZ,  maxX,maxY,maxZ,  minX,maxY,maxZ, // front
+        maxX,minY,minZ,  minX,minY,minZ,  minX,maxY,minZ,  maxX,maxY,minZ, // back
+        minX,minY,minZ,  minX,minY,maxZ,  minX,maxY,maxZ,  minX,maxY,minZ, // left
+        maxX,minY,maxZ,  maxX,minY,minZ,  maxX,maxY,minZ,  maxX,maxY,maxZ, // right
+        minX,maxY,maxZ,  maxX,maxY,maxZ,  maxX,maxY,minZ,  minX,maxY,minZ, // top
+        minX,minY,minZ,  maxX,minY,minZ,  maxX,minY,maxZ,  minX,minY,maxZ  // bottom
+      ];
+      const normals=[
+        0,0,1,0,0,1,0,0,1,0,0,1,
+        0,0,-1,0,0,-1,0,0,-1,0,0,-1,
+        -1,0,0,-1,0,0,-1,0,0,-1,0,0,
+        1,0,0,1,0,0,1,0,0,1,0,0,
+        0,1,0,0,1,0,0,1,0,0,1,0,
+        0,-1,0,0,-1,0,0,-1,0,0,-1,0
+      ];
+      const indices=[];
+      for(let i=0;i<6;i++){
+        const o=i*4;
+        indices.push(o,o+1,o+2, o,o+2,o+3);
+      }
+      return {positions,normals,indices};
+    }
+
+    function createFrustum(base, top, height){
+      const hb=base/2, ht=top/2;
+      const y0=0, y1=height;
+      const positions=[
+        -hb,y0,hb,  hb,y0,hb,  ht,y1,ht,  -ht,y1,ht, // front
+        hb,y0,hb,  hb,y0,-hb,  ht,y1,-ht,  ht,y1,ht, // right
+        hb,y0,-hb, -hb,y0,-hb, -ht,y1,-ht, ht,y1,-ht, // back
+        -hb,y0,-hb, -hb,y0,hb, -ht,y1,ht, -ht,y1,-ht, // left
+        -ht,y1,ht,  ht,y1,ht,  ht,y1,-ht, -ht,y1,-ht, // top
+        -hb,y0,-hb, hb,y0,-hb, hb,y0,hb, -hb,y0,hb    // bottom
+      ];
+      const normals=[];
+      const faceNormals=[
+        normalize3({x:0,y:0.6,z:1}),
+        normalize3({x:1,y:0.6,z:0}),
+        normalize3({x:0,y:0.6,z:-1}),
+        normalize3({x:-1,y:0.6,z:0}),
+        {x:0,y:1,z:0},
+        {x:0,y:-1,z:0}
+      ];
+      for(const n of faceNormals){
+        for(let i=0;i<4;i++) normals.push(n.x,n.y,n.z);
+      }
+      const indices=[];
+      for(let i=0;i<6;i++){
+        const o=i*4;
+        indices.push(o,o+1,o+2, o,o+2,o+3);
+      }
+      return {positions,normals,indices};
+    }
+
+    function createSphere(radius, latBands=18, lonBands=18){
+      const positions=[], normals=[], indices=[];
+      for(let lat=0;lat<=latBands;lat++){
+        const theta=lat*Math.PI/latBands;
+        const sinT=Math.sin(theta), cosT=Math.cos(theta);
+        for(let lon=0;lon<=lonBands;lon++){
+          const phi=lon*2*Math.PI/lonBands;
+          const sinP=Math.sin(phi), cosP=Math.cos(phi);
+          const x=cosP*sinT, y=cosT, z=sinP*sinT;
+          positions.push(radius*x, radius*y, radius*z);
+          normals.push(x,y,z);
+        }
+      }
+      for(let lat=0;lat<latBands;lat++){
+        for(let lon=0;lon<lonBands;lon++){
+          const first=lat*(lonBands+1)+lon;
+          const second=first+lonBands+1;
+          indices.push(first,second,first+1, second,second+1,first+1);
+        }
+      }
+      return {positions,normals,indices};
+    }
+
+    // Shaders
+    const vsSource=`
+    attribute vec3 aPosition;
+    attribute vec3 aNormal;
+    uniform mat4 uMVP;
+    uniform mat4 uModel;
+    uniform mat4 uNormalMatrix;
+    varying vec3 vNormal;
+    void main(){
+      vNormal = mat3(uNormalMatrix) * aNormal;
+      gl_Position = uMVP * vec4(aPosition,1.0);
+    }`;
+    const fsSource=`
+    precision mediump float;
+    varying vec3 vNormal;
+    uniform vec3 uLightDir;
+    uniform vec3 uColor;
+    uniform vec3 uAmbient;
+    uniform float uAlpha;
+    void main(){
+      vec3 n = normalize(vNormal);
+      float diff = max(dot(n, normalize(uLightDir)), 0.0);
+      vec3 color = uAmbient + uColor * diff;
+      gl_FragColor = vec4(color, uAlpha);
+    }`;
+
+    function createShader(type, source){
+      const s=gl.createShader(type);
+      gl.shaderSource(s, source);
+      gl.compileShader(s);
+      if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)){
+        console.error(gl.getShaderInfoLog(s));
+      }
+      return s;
+    }
+    const vs=createShader(gl.VERTEX_SHADER, vsSource);
+    const fs=createShader(gl.FRAGMENT_SHADER, fsSource);
+    const program=gl.createProgram();
+    gl.attachShader(program, vs);
+    gl.attachShader(program, fs);
+    gl.linkProgram(program);
+    if(!gl.getProgramParameter(program, gl.LINK_STATUS)){
+      console.error(gl.getProgramInfoLog(program));
+    }
+    gl.useProgram(program);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+    const attribs={
+      position: gl.getAttribLocation(program, 'aPosition'),
+      normal: gl.getAttribLocation(program, 'aNormal')
+    };
+    const uniforms={
+      mvp: gl.getUniformLocation(program, 'uMVP'),
+      model: gl.getUniformLocation(program, 'uModel'),
+      normalMatrix: gl.getUniformLocation(program, 'uNormalMatrix'),
+      lightDir: gl.getUniformLocation(program, 'uLightDir'),
+      color: gl.getUniformLocation(program, 'uColor'),
+      ambient: gl.getUniformLocation(program, 'uAmbient'),
+      alpha: gl.getUniformLocation(program, 'uAlpha')
+    };
+
+    function createMesh(geo){
+      const vao=gl.createVertexArray();
+      gl.bindVertexArray(vao);
+
+      const pos=gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, pos);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo.positions), gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(attribs.position);
+      gl.vertexAttribPointer(attribs.position,3,gl.FLOAT,false,0,0);
+
+      const nor=gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, nor);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo.normals), gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(attribs.normal);
+      gl.vertexAttribPointer(attribs.normal,3,gl.FLOAT,false,0,0);
+
+      const idx=gl.createBuffer();
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idx);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(geo.indices), gl.STATIC_DRAW);
+
+      return {vao, count: geo.indices.length};
+    }
+
+    // Scene params
     const plane = {
       w: 920,
       h: 920,
       tilt: { x: 0, y: 0 },
       targetTilt: { x: 0, y: 0 },
-      maxTilt: 0.8, // radians-ish; just visual + physics scale
+      maxTilt: 0.8,
       wallHeight: 35,
       wallThickness: 14
     };
-
-    const camera = { z: 1400 };
-
     const marble = {
       r: 25,
-      pos: { x: size.w / 2, y: size.h / 2 },
-      vel: { x: 0, y: 0 },
-      z: 0,   // center height in world space
-      vz: 0
+      pos: { x: 0, z: 0 },
+      vel: { x: 0, z: 0 },
+      y: 0,
+      vy: 0
     };
-
     const pedestal = {
-      topSize: marble.r * 8,    // 4 diameters wide
-      ramp: marble.r * 8,       // ramp length each side
-      height: marble.r * 4,     // 2 diameters tall
-      slopeGravity: 420         // scales slope influence on acceleration
+      topSize: marble.r * 8,
+      ramp: marble.r * 8,
+      height: marble.r * 4,
+      slopeGravity: 420
     };
-
     const keys = new Set();
-    const stars = [];
 
-    function initStars() {
-      const count = 250;
-      for (let i = 0; i < count; i++) {
-        stars.push({
-          x: Math.random() * size.w,
-          y: Math.random() * size.h,
-          r: Math.random() * 1.2 + 0.4,
-          a: Math.random() * 0.5 + 0.3
-        });
-      }
-    }
-
-    function drawStars() {
-      ctx.fillStyle = 'transparent';
-      for (const s of stars) {
-        ctx.beginPath();
-        ctx.fillStyle = `rgba(255, 255, 255, ${s.a})`;
-        ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-
-    function projectPoint(px, py, pz = 0) {
-      const dx = px - size.w / 2;
-      const dy = py - size.h / 2;
-      const rx = plane.tilt.y * 0.35; // pitch
-      const ry = -plane.tilt.x * 0.35; // roll
-
-      // rotate around X (affects y, z)
-      const cosRx = Math.cos(rx);
-      const sinRx = Math.sin(rx);
-      const y1 = dy * cosRx - pz * sinRx;
-      const z1 = dy * sinRx + pz * cosRx;
-
-      // rotate around Y (affects x, z)
-      const cosRy = Math.cos(ry);
-      const sinRy = Math.sin(ry);
-      const x2 = dx * cosRy + z1 * sinRy;
-      const z2 = -dx * sinRy + z1 * cosRy;
-
-      const scale = camera.z / (camera.z - z2);
-      return {
-        x: x2 * scale + size.w / 2,
-        y: y1 * scale + size.h / 2,
-        scale
-      };
-    }
-
-    function planeCorners(height = 0, w = plane.w, h = plane.h) {
-      const hx = w / 2;
-      const hy = h / 2;
-      return [
-        projectPoint(size.w / 2 - hx, size.h / 2 - hy, height),
-        projectPoint(size.w / 2 + hx, size.h / 2 - hy, height),
-        projectPoint(size.w / 2 + hx, size.h / 2 + hy, height),
-        projectPoint(size.w / 2 - hx, size.h / 2 + hy, height)
-      ];
-    }
-
-    function pedestalHeightAt(x, y) {
-      const cx = size.w / 2;
-      const cy = size.h / 2;
+    function pedestalHeightAt(x, z) {
       const halfTop = pedestal.topSize / 2;
       const ramp = pedestal.ramp;
       const maxHalf = halfTop + ramp;
-      const dx = Math.abs(x - cx);
-      const dy = Math.abs(y - cy);
-      if (dx > maxHalf || dy > maxHalf) return 0;
-      if (dx <= halfTop && dy <= halfTop) return pedestal.height;
-      const t = Math.max(dx - halfTop, dy - halfTop);
+      const dx = Math.abs(x);
+      const dz = Math.abs(z);
+      if (dx > maxHalf || dz > maxHalf) return 0;
+      if (dx <= halfTop && dz <= halfTop) return pedestal.height;
+      const t = Math.max(dx - halfTop, dz - halfTop);
       const ratio = 1 - Math.min(1, t / ramp);
       return pedestal.height * ratio;
     }
+    function pedestalNormalAt(x, z) {
+      const eps = 2;
+      const h = pedestalHeightAt(x, z);
+      const hx = pedestalHeightAt(x + eps, z) - pedestalHeightAt(x - eps, z);
+      const hz = pedestalHeightAt(x, z + eps) - pedestalHeightAt(x, z - eps);
+      return normalize3({ x: -hx, y: eps * 2, z: -hz });
+    }
 
-    function drawWalls() {
-      const innerBase = planeCorners(0);
-      const innerTop = planeCorners(plane.wallHeight);
-      const expandedW = plane.w + plane.wallThickness * 2;
-      const expandedH = plane.h + plane.wallThickness * 2;
-      const outerBase = planeCorners(0, expandedW, expandedH);
-      const outerTop = planeCorners(plane.wallHeight, expandedW, expandedH);
+    // Geometry instances
+    const meshes = {
+      floor: createMesh(createBox(-plane.w/2, plane.w/2, -2, 0, -plane.h/2, plane.h/2)),
+      walls: createWallMeshes(),
+      pedestal: createMesh(createFrustum(pedestal.topSize + pedestal.ramp * 2, pedestal.topSize, pedestal.height)),
+      marble: createMesh(createSphere(marble.r, 18, 18))
+    };
 
-      const edges = [
-        { a: innerBase[0], b: innerBase[1], ta: innerTop[0], tb: innerTop[1], oa: outerBase[0], ob: outerBase[1], ota: outerTop[0], otb: outerTop[1] }, // top
-        { a: innerBase[1], b: innerBase[2], ta: innerTop[1], tb: innerTop[2], oa: outerBase[1], ob: outerBase[2], ota: outerTop[1], otb: outerTop[2] }, // right
-        { a: innerBase[2], b: innerBase[3], ta: innerTop[2], tb: innerTop[3], oa: outerBase[2], ob: outerBase[3], ota: outerTop[2], otb: outerTop[3] }, // bottom
-        { a: innerBase[3], b: innerBase[0], ta: innerTop[3], tb: innerTop[0], oa: outerBase[3], ob: outerBase[0], ota: outerTop[3], otb: outerTop[0] }  // left
+    function createWallMeshes(){
+      const t=plane.wallThickness;
+      const h=plane.wallHeight;
+      const w=plane.w;
+      const hl=plane.h;
+      const boxes=[
+        createBox(-w/2-t, w/2+t, 0, h, hl/2, hl/2+t),    // back
+        createBox(-w/2-t, w/2+t, 0, h, -hl/2-t, -hl/2),  // front
+        createBox(-w/2-t, -w/2, 0, h, -hl/2, hl/2),      // left
+        createBox(w/2, w/2+t, 0, h, -hl/2, hl/2)         // right
       ];
-
-      // draw outer faces first
-      for (const edge of edges) {
-        ctx.beginPath();
-        ctx.moveTo(edge.oa.x, edge.oa.y);
-        ctx.lineTo(edge.ob.x, edge.ob.y);
-        ctx.lineTo(edge.otb.x, edge.otb.y);
-        ctx.lineTo(edge.ota.x, edge.ota.y);
-        ctx.closePath();
-
-        const gradOuter = ctx.createLinearGradient(edge.oa.x, edge.oa.y, edge.ota.x, edge.ota.y);
-        gradOuter.addColorStop(0, 'rgba(10, 70, 150, 0.9)');
-        gradOuter.addColorStop(1, 'rgba(10, 110, 180, 0.35)');
-        ctx.fillStyle = gradOuter;
-        ctx.fill();
-      }
-
-      // inner faces
-      for (const edge of edges) {
-        ctx.beginPath();
-        ctx.moveTo(edge.a.x, edge.a.y);
-        ctx.lineTo(edge.b.x, edge.b.y);
-        ctx.lineTo(edge.tb.x, edge.tb.y);
-        ctx.lineTo(edge.ta.x, edge.ta.y);
-        ctx.closePath();
-
-        const gradInner = ctx.createLinearGradient(edge.a.x, edge.a.y, edge.ta.x, edge.ta.y);
-        gradInner.addColorStop(0, 'rgba(20, 100, 200, 0.9)');
-        gradInner.addColorStop(1, 'rgba(30, 140, 230, 0.4)');
-        ctx.fillStyle = gradInner;
-        ctx.fill();
-      }
-
-      // top cap band
-      for (const edge of edges) {
-        ctx.beginPath();
-        ctx.moveTo(edge.ta.x, edge.ta.y);
-        ctx.lineTo(edge.tb.x, edge.tb.y);
-        ctx.lineTo(edge.otb.x, edge.otb.y);
-        ctx.lineTo(edge.ota.x, edge.ota.y);
-        ctx.closePath();
-
-        const gradTop = ctx.createLinearGradient(edge.ta.x, edge.ta.y, edge.ota.x, edge.ota.y);
-        gradTop.addColorStop(0, 'rgba(200, 235, 255, 0.45)');
-        gradTop.addColorStop(1, 'rgba(120, 180, 255, 0.25)');
-        ctx.fillStyle = gradTop;
-        ctx.fill();
-      }
+      return boxes.map(createMesh);
     }
 
-    function drawPedestal() {
-      const cx = size.w / 2;
-      const cy = size.h / 2;
-      const halfTop = pedestal.topSize / 2;
-      const halfOuter = halfTop + pedestal.ramp;
+    // Camera/light
+    const lightDir = normalize3({ x: -0.4, y: 0.8, z: 0.3 });
+    // Keep the camera directly overhead for a top-down view; nudge z to avoid colinearity with the up vector
+    const camera = { pos: { x: 0, y: 1500, z: 1 }, target: { x: 0, y: 0, z: 0 } };
 
-      const topCorners = [
-        projectPoint(cx - halfTop, cy - halfTop, pedestal.height),
-        projectPoint(cx + halfTop, cy - halfTop, pedestal.height),
-        projectPoint(cx + halfTop, cy + halfTop, pedestal.height),
-        projectPoint(cx - halfTop, cy + halfTop, pedestal.height)
-      ];
-
-      const baseCorners = [
-        projectPoint(cx - halfOuter, cy - halfOuter, 0),
-        projectPoint(cx + halfOuter, cy - halfOuter, 0),
-        projectPoint(cx + halfOuter, cy + halfOuter, 0),
-        projectPoint(cx - halfOuter, cy + halfOuter, 0)
-      ];
-
-      // Ramps (sides)
-      const faces = [
-        { a: baseCorners[0], b: baseCorners[1], ta: topCorners[0], tb: topCorners[1] }, // top
-        { a: baseCorners[1], b: baseCorners[2], ta: topCorners[1], tb: topCorners[2] }, // right
-        { a: baseCorners[2], b: baseCorners[3], ta: topCorners[2], tb: topCorners[3] }, // bottom
-        { a: baseCorners[3], b: baseCorners[0], ta: topCorners[3], tb: topCorners[0] }  // left
-      ];
-
-      for (const face of faces) {
-        ctx.beginPath();
-        ctx.moveTo(face.a.x, face.a.y);
-        ctx.lineTo(face.b.x, face.b.y);
-        ctx.lineTo(face.tb.x, face.tb.y);
-        ctx.lineTo(face.ta.x, face.ta.y);
-        ctx.closePath();
-
-        const rampGrad = ctx.createLinearGradient(face.a.x, face.a.y, face.ta.x, face.ta.y);
-        rampGrad.addColorStop(0, 'rgba(20, 80, 180, 0.6)');
-        rampGrad.addColorStop(1, 'rgba(40, 130, 220, 0.25)');
-        ctx.fillStyle = rampGrad;
-        ctx.fill();
-      }
-
-      // Top face
-      ctx.beginPath();
-      ctx.moveTo(topCorners[0].x, topCorners[0].y);
-      for (let i = 1; i < topCorners.length; i++) ctx.lineTo(topCorners[i].x, topCorners[i].y);
-      ctx.closePath();
-      const topGrad = ctx.createRadialGradient(cx, cy, halfTop * 0.2, cx, cy, halfTop * 1.4);
-      topGrad.addColorStop(0, 'rgba(70, 150, 255, 0.45)');
-      topGrad.addColorStop(1, 'rgba(20, 60, 140, 0.7)');
-      ctx.fillStyle = topGrad;
-      ctx.fill();
-
-    }
-
-    function drawPlane() {
-      const corners = planeCorners();
-      ctx.save();
-      ctx.beginPath();
-      ctx.moveTo(corners[0].x, corners[0].y);
-      for (let i = 1; i < corners.length; i++) ctx.lineTo(corners[i].x, corners[i].y);
-      ctx.closePath();
-      ctx.clip();
-
-      const minY = Math.min(...corners.map(c => c.y));
-      const maxY = Math.max(...corners.map(c => c.y));
-      const g = ctx.createLinearGradient(0, minY, 0, maxY);
-      g.addColorStop(0, '#0d3576');
-      g.addColorStop(0.35, '#1251b3');
-      g.addColorStop(0.7, '#0d3576');
-      ctx.fillStyle = g;
-      ctx.fillRect(0, minY, size.w, maxY - minY);
-
-      const shine = ctx.createLinearGradient(0, minY, 0, maxY);
-      shine.addColorStop(0, 'rgba(160, 210, 255, 0.25)');
-      shine.addColorStop(0.3, 'rgba(160, 210, 255, 0.05)');
-      shine.addColorStop(1, 'rgba(160, 210, 255, 0)');
-      ctx.fillStyle = shine;
-      ctx.fillRect(0, minY, size.w, maxY - minY);
-
-      ctx.restore();
-    }
-
-    function drawMarble() {
-      const projected = projectPoint(marble.pos.x, marble.pos.y, marble.z);
-      const r = marble.r * projected.scale;
-      const x = projected.x;
-      const y = projected.y;
-
-      const g = ctx.createRadialGradient(
-        x - r * 0.28, y - r * 0.32, r * 0.1,
-        x, y, r * 1.15
-      );
-      g.addColorStop(0, 'rgba(215, 225, 240, 0.9)');
-      g.addColorStop(0.22, '#9ea6b2');
-      g.addColorStop(0.55, '#606975');
-      g.addColorStop(1, '#20252f');
-
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
-      ctx.shadowBlur = 10;
-      ctx.shadowOffsetY = 6 * projected.scale;
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-
-      const reflection = ctx.createLinearGradient(x - r, y - r, x + r, y + r);
-      reflection.addColorStop(0, 'rgba(255, 255, 255, 0.12)');
-      reflection.addColorStop(0.5, 'rgba(255, 255, 255, 0)');
-      reflection.addColorStop(1, 'rgba(255, 255, 255, 0.18)');
-      ctx.fillStyle = reflection;
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Subtle starfield reflection on the marble surface
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.clip();
-      ctx.globalAlpha = 0.4;
-      ctx.fillStyle = 'white';
-      const starScale = 0.12 * projected.scale;
-      const offsetX = plane.tilt.x * r * 0.28;
-      const offsetY = plane.tilt.y * r * 0.28;
-      for (const s of stars) {
-        const sx = x + (s.x - size.w / 2) * starScale + offsetX;
-        const sy = y + (s.y - size.h / 2) * starScale + offsetY;
-        ctx.beginPath();
-        ctx.fillStyle = `rgba(255, 255, 255, ${s.a * 0.9})`;
-        ctx.arc(sx, sy, Math.max(0.25, s.r * starScale * 4.5), 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.restore();
-    }
-
-    function drawFloorReflection() {
-      const groundH = pedestalHeightAt(marble.pos.x, marble.pos.y) + marble.r;
-      const altitude = Math.max(0, marble.z - groundH);
-      const fade = Math.max(0, 1 - altitude / (marble.r * 4));
-      if (fade <= 0.01) return;
-
-      const groundProj = projectPoint(marble.pos.x, marble.pos.y, groundH);
-      const r = marble.r * groundProj.scale;
-      const projected = groundProj;
-      const { w, h } = plane;
-      const px = (size.w - w) / 2;
-      const py = (size.h - h) / 2;
-      const x = marble.pos.x;
-      const y = marble.pos.y;
-
-      if (x < px - marble.r || x > px + w + marble.r || y < py - marble.r || y > py + h + marble.r) return;
-
-      const offsetX = plane.tilt.x * r * 0.35;
-      const offsetY = plane.tilt.y * r * 0.35;
-
-      ctx.save();
-      ctx.translate(projected.x + offsetX, projected.y + offsetY + r * 0.05);
-      const g = ctx.createRadialGradient(0, 0, r * 0.08, 0, 0, r * 1.15);
-      g.addColorStop(0, `rgba(200, 235, 255, ${0.6 * fade})`);
-      g.addColorStop(0.4, `rgba(190, 225, 255, ${0.34 * fade})`);
-      g.addColorStop(0.8, `rgba(140, 180, 235, ${0.2 * fade})`);
-      g.addColorStop(1, 'rgba(0, 0, 0, 0)');
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.arc(0, 0, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
-
+    // Input and physics
     function updateInput(dt) {
       const target = plane.targetTilt;
       target.x = 0;
       target.y = 0;
-
-      if (keys.has('KeyA')) target.x += 1;
-      if (keys.has('KeyD')) target.x -= 1;
+      // Swap left/right so A tilts left, D tilts right
+      if (keys.has('KeyA')) target.x -= 1;
+      if (keys.has('KeyD')) target.x += 1;
       if (keys.has('KeyW')) target.y += 1;
       if (keys.has('KeyS')) target.y -= 1;
-
       const len = Math.hypot(target.x, target.y);
-      if (len > 1) {
-        target.x /= len;
-        target.y /= len;
-      }
-
+      if (len > 1) { target.x /= len; target.y /= len; }
       const smoothing = 12;
       plane.tilt.x += (target.x * plane.maxTilt - plane.tilt.x) * dt * smoothing;
       plane.tilt.y += (target.y * plane.maxTilt - plane.tilt.y) * dt * smoothing;
@@ -412,56 +532,103 @@
 
     function updatePhysics(dt) {
       const tiltAccel = 240;
-      const groundHeight = pedestalHeightAt(marble.pos.x, marble.pos.y) + marble.r;
-      const altitude = marble.z - groundHeight;
-      const support = Math.max(0, Math.min(1, 1 - altitude / (marble.r * 1.5))); // 1 on ground, fades in air
+      const groundHeight = pedestalHeightAt(marble.pos.x, marble.pos.z) + marble.r;
+      const altitude = marble.y - groundHeight;
+      const support = Math.max(0, Math.min(1, 1 - altitude / (marble.r * 1.5)));
 
       let ax = -tiltAccel * Math.sin(plane.tilt.x) * (0.35 + 0.65 * support);
-      let ay = -tiltAccel * Math.sin(plane.tilt.y) * (0.35 + 0.65 * support);
+      let az = tiltAccel * Math.sin(plane.tilt.y) * (0.35 + 0.65 * support);
 
-      // Add slope acceleration from pedestal heightfield (negative gradient), scaled by support
       const eps = 2;
-      const dhdx = (pedestalHeightAt(marble.pos.x + eps, marble.pos.y) - pedestalHeightAt(marble.pos.x - eps, marble.pos.y)) / (2 * eps);
-      const dhdy = (pedestalHeightAt(marble.pos.x, marble.pos.y + eps) - pedestalHeightAt(marble.pos.x, marble.pos.y - eps)) / (2 * eps);
+      const dhdx = (pedestalHeightAt(marble.pos.x + eps, marble.pos.z) - pedestalHeightAt(marble.pos.x - eps, marble.pos.z)) / (2 * eps);
+      const dhdz = (pedestalHeightAt(marble.pos.x, marble.pos.z + eps) - pedestalHeightAt(marble.pos.x, marble.pos.z - eps)) / (2 * eps);
       const slopeScale = pedestal.slopeGravity * support;
-      const sax = -slopeScale * dhdx;
-      const say = -slopeScale * dhdy;
-      ax += sax;
-      ay += say;
+      ax += -slopeScale * dhdx;
+      az += -slopeScale * dhdz;
 
       marble.vel.x += ax * dt;
-      marble.vel.y += ay * dt;
+      marble.vel.z += az * dt;
 
       const frictionGround = 0.9975;
       const frictionAir = 0.999;
       const friction = support > 0.5 ? frictionGround : frictionAir;
       marble.vel.x *= friction;
-      marble.vel.y *= friction;
+      marble.vel.z *= friction;
 
       marble.pos.x += marble.vel.x * dt;
-      marble.pos.y += marble.vel.y * dt;
+      marble.pos.z += marble.vel.z * dt;
 
-      // vertical motion
-      const gravityZ = 900;
-      marble.vz -= gravityZ * dt;
-      marble.z += marble.vz * dt;
+      const gravityY = 900;
+      marble.vy -= gravityY * dt;
+      marble.y += marble.vy * dt;
 
-      const newGround = pedestalHeightAt(marble.pos.x, marble.pos.y) + marble.r;
-      if (marble.z <= newGround) {
-        marble.z = newGround;
-        if (marble.vz < 0) marble.vz = 0;
+      const newGround = pedestalHeightAt(marble.pos.x, marble.pos.z) + marble.r;
+      if (marble.y <= newGround) {
+        marble.y = newGround;
+        if (marble.vy < 0) marble.vy = 0;
       }
 
       const { w, h } = plane;
-      const minX = (size.w - w) / 2 + marble.r;
-      const maxX = (size.w + w) / 2 - marble.r;
-      const minY = (size.h - h) / 2 + marble.r;
-      const maxY = (size.h + h) / 2 - marble.r;
+      const minX = -w / 2 + marble.r;
+      const maxX = w / 2 - marble.r;
+      const minZ = -h / 2 + marble.r;
+      const maxZ = h / 2 - marble.r;
 
       if (marble.pos.x < minX) { marble.pos.x = minX; marble.vel.x *= -0.6; }
       if (marble.pos.x > maxX) { marble.pos.x = maxX; marble.vel.x *= -0.6; }
-      if (marble.pos.y < minY) { marble.pos.y = minY; marble.vel.y *= -0.6; }
-      if (marble.pos.y > maxY) { marble.pos.y = maxY; marble.vel.y *= -0.6; }
+      if (marble.pos.z < minZ) { marble.pos.z = minZ; marble.vel.z *= -0.6; }
+      if (marble.pos.z > maxZ) { marble.pos.z = maxZ; marble.vel.z *= -0.6; }
+    }
+
+    // Render helpers
+    function setMatrices(model) {
+      const aspect = canvas.width / canvas.height;
+      const proj = mat4Perspective(Math.PI / 4, aspect, 10, 5000);
+      const view = mat4LookAt(camera.pos, camera.target, { x: 0, y: 0, z: 1 });
+      const vp = mat4Multiply(proj, view);
+      const mvp = mat4Multiply(vp, model);
+      const normalMatrix = mat4Transpose(mat4Invert(model));
+      gl.uniformMatrix4fv(uniforms.mvp, false, mvp);
+      gl.uniformMatrix4fv(uniforms.model, false, model);
+      gl.uniformMatrix4fv(uniforms.normalMatrix, false, normalMatrix);
+    }
+
+    function drawMesh(mesh, model, color, ambient=[0.05,0.08,0.12], alpha=1.0) {
+      gl.bindVertexArray(mesh.vao);
+      setMatrices(model);
+      gl.uniform3fv(uniforms.lightDir, new Float32Array([lightDir.x, lightDir.y, lightDir.z]));
+      gl.uniform3fv(uniforms.color, new Float32Array(color));
+      gl.uniform3fv(uniforms.ambient, new Float32Array(ambient));
+      gl.uniform1f(uniforms.alpha, alpha);
+      gl.drawElements(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0);
+    }
+
+    function boardTransform() {
+      let m = mat4Identity();
+      m = mat4RotateX(m, plane.tilt.y * 0.35);
+      m = mat4RotateZ(m, plane.tilt.x * 0.35);
+      return m;
+    }
+
+    function drawMarbleEffects(boardM) {
+      const planeY = pedestalHeightAt(marble.pos.x, marble.pos.z);
+      const normal = pedestalNormalAt(marble.pos.x, marble.pos.z);
+      const orient = mat4FromNormal(normal);
+      // Soft blob shadow aligned to surface
+      const shadowOffset = 1.2;
+      let shadowM = boardM;
+      shadowM = mat4Translate(shadowM, [marble.pos.x, planeY + shadowOffset, marble.pos.z]);
+      shadowM = mat4Multiply(shadowM, orient);
+      shadowM = mat4Scale(shadowM, [1.08, 0.08, 1.08]);
+      drawMesh(meshes.marble, shadowM, [0,0,0], [0,0,0], 0.38);
+      // Reflection (mirror across the local surface plane)
+      const distanceAbove = marble.y - planeY;
+      const reflectionY = planeY - distanceAbove + 1.2;
+      let reflectionM = boardM;
+      reflectionM = mat4Translate(reflectionM, [marble.pos.x, reflectionY, marble.pos.z]);
+      reflectionM = mat4Multiply(reflectionM, orient);
+      reflectionM = mat4Scale(reflectionM, [1, -1, 1]);
+      drawMesh(meshes.marble, reflectionM, [0.65,0.7,0.8], [0.05,0.05,0.08], 0.22);
     }
 
     function frame(time) {
@@ -472,13 +639,23 @@
       updateInput(dt);
       updatePhysics(dt);
 
-      ctx.clearRect(0, 0, size.w, size.h);
-      drawStars();
-      drawPlane();
-      drawPedestal();
-      drawWalls();
-      drawFloorReflection();
-      drawMarble();
+      gl.enable(gl.DEPTH_TEST);
+      gl.clearColor(0.02, 0.05, 0.12, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+      const boardM = boardTransform();
+      drawMesh(meshes.floor, boardM, [0.07, 0.28, 0.7], [0.04,0.06,0.1]);
+      const wallColor=[0.08,0.22,0.6];
+      for(const w of meshes.walls) drawMesh(w, boardM, wallColor, [0.04,0.05,0.09]);
+      drawMesh(meshes.pedestal, boardM, [0.1,0.35,0.8], [0.05,0.06,0.1]);
+      gl.depthMask(false);
+      gl.disable(gl.DEPTH_TEST);
+      drawMarbleEffects(boardM);
+      gl.depthMask(true);
+      gl.enable(gl.DEPTH_TEST);
+      let marbleM = boardM;
+      marbleM = mat4Translate(marbleM, [marble.pos.x, marble.y, marble.pos.z]);
+      drawMesh(meshes.marble, marbleM, [0.7,0.7,0.7], [0.1,0.1,0.1]);
 
       requestAnimationFrame(frame);
     }
@@ -488,9 +665,7 @@
       window.addEventListener('keyup', (e) => keys.delete(e.code));
     }
 
-    initStars();
-    // Start marble on top of the pedestal
-    marble.z = pedestalHeightAt(marble.pos.x, marble.pos.y) + marble.r;
+    marble.y = pedestalHeightAt(marble.pos.x, marble.pos.z) + marble.r;
     setupInput();
     requestAnimationFrame(frame);
   </script>
