@@ -459,14 +459,80 @@
       vy: 0
     };
     const pedestal = {
-      topSize: marble.r * 8,
-      ramp: marble.r * 8,
-      height: marble.r * 4,
+      topSize: marble.r * (8 / 3),
+      ramp: marble.r * (8 / 3),
+      height: marble.r * (4 / 3),
       slopeGravity: 420
     };
+    const pedestalFootprint = pedestal.topSize * 0.5 + pedestal.ramp;
+    const pedestalGridCount = 3;
+    const pedestalGridSpacing = (() => {
+      const totalPedestalWidth = pedestalFootprint * 2 * pedestalGridCount;
+      const gap = Math.max(0, (Math.min(plane.w, plane.h) - totalPedestalWidth) / (pedestalGridCount + 1));
+      return pedestalFootprint * 2 + gap;
+    })();
+    const pedestalGrid = {
+      count: pedestalGridCount,
+      spacing: pedestalGridSpacing
+    };
+    const pedestalPositions = (() => {
+      const arr=[];
+      const offset = (pedestalGrid.count - 1) * 0.5;
+      for(let i=0;i<pedestalGrid.count;i++){
+        for(let j=0;j<pedestalGrid.count;j++){
+          arr.push({
+            x: (i - offset) * pedestalGrid.spacing,
+            z: (j - offset) * pedestalGrid.spacing
+          });
+        }
+      }
+      return arr;
+    })();
     const keys = new Set();
+    const history = [];
+    const maxHistoryFrames = 900; // ~15s at 60fps
 
-    function pedestalHeightAt(x, z) {
+    function captureState() {
+      return {
+        marble: {
+          pos: { x: marble.pos.x, z: marble.pos.z },
+          vel: { x: marble.vel.x, z: marble.vel.z },
+          y: marble.y,
+          vy: marble.vy
+        },
+        plane: {
+          tilt: { x: plane.tilt.x, y: plane.tilt.y },
+          target: { x: plane.targetTilt.x, y: plane.targetTilt.y }
+        }
+      };
+    }
+
+    function applyState(state) {
+      marble.pos.x = state.marble.pos.x;
+      marble.pos.z = state.marble.pos.z;
+      marble.vel.x = state.marble.vel.x;
+      marble.vel.z = state.marble.vel.z;
+      marble.y = state.marble.y;
+      marble.vy = state.marble.vy;
+      plane.tilt.x = state.plane.tilt.x;
+      plane.tilt.y = state.plane.tilt.y;
+      plane.targetTilt.x = state.plane.target.x;
+      plane.targetTilt.y = state.plane.target.y;
+    }
+
+    function pushHistory() {
+      history.push(captureState());
+      if (history.length > maxHistoryFrames) history.shift();
+    }
+
+    function rewindStep() {
+      if (history.length > 1) {
+        history.pop(); // discard current
+        applyState(history[history.length - 1]);
+      }
+    }
+
+    function pedestalHeightAtLocal(x, z) {
       const halfTop = pedestal.topSize / 2;
       const ramp = pedestal.ramp;
       const maxHalf = halfTop + ramp;
@@ -477,6 +543,14 @@
       const t = Math.max(dx - halfTop, dz - halfTop);
       const ratio = 1 - Math.min(1, t / ramp);
       return pedestal.height * ratio;
+    }
+    function pedestalHeightAt(x, z) {
+      let maxH = 0;
+      for (const p of pedestalPositions) {
+        const h = pedestalHeightAtLocal(x - p.x, z - p.z);
+        if (h > maxH) maxH = h;
+      }
+      return maxH;
     }
     function pedestalNormalAt(x, z) {
       const eps = 2;
@@ -636,8 +710,14 @@
       const dt = Math.min(0.033, now - (frame.last || now));
       frame.last = now;
 
-      updateInput(dt);
-      updatePhysics(dt);
+      const rewinding = keys.has('Space');
+      if (rewinding) {
+        rewindStep();
+      } else {
+        updateInput(dt);
+        updatePhysics(dt);
+        pushHistory();
+      }
 
       gl.enable(gl.DEPTH_TEST);
       gl.clearColor(0.02, 0.05, 0.12, 1);
@@ -647,7 +727,11 @@
       drawMesh(meshes.floor, boardM, [0.07, 0.28, 0.7], [0.04,0.06,0.1]);
       const wallColor=[0.08,0.22,0.6];
       for(const w of meshes.walls) drawMesh(w, boardM, wallColor, [0.04,0.05,0.09]);
-      drawMesh(meshes.pedestal, boardM, [0.1,0.35,0.8], [0.05,0.06,0.1]);
+      for(const p of pedestalPositions){
+        let pedM = boardM;
+        pedM = mat4Translate(pedM, [p.x, 0, p.z]);
+        drawMesh(meshes.pedestal, pedM, [0.1,0.35,0.8], [0.05,0.06,0.1]);
+      }
       gl.depthMask(false);
       gl.disable(gl.DEPTH_TEST);
       drawMarbleEffects(boardM);
@@ -666,6 +750,7 @@
     }
 
     marble.y = pedestalHeightAt(marble.pos.x, marble.pos.z) + marble.r;
+    pushHistory();
     setupInput();
     requestAnimationFrame(frame);
   </script>
