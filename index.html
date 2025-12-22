@@ -128,6 +128,15 @@
       r[0]=c; r[4]=-s; r[1]=s; r[5]=c;
       return mat4Multiply(m,r);
     }
+    function rotateAroundAxis(v, axis, angle){
+      const {x:ax,y:ay,z:az}=normalize3(axis);
+      const cos=Math.cos(angle), sin=Math.sin(angle);
+      return {
+        x: v.x*cos + (ay*v.z - az*v.y)*sin + ax*(ax*v.x + ay*v.y + az*v.z)*(1-cos),
+        y: v.y*cos + (az*v.x - ax*v.z)*sin + ay*(ax*v.x + ay*v.y + az*v.z)*(1-cos),
+        z: v.z*cos + (ax*v.y - ay*v.x)*sin + az*(ax*v.x + ay*v.y + az*v.z)*(1-cos)
+      };
+    }
     function mat4Perspective(fov,aspect,near,far){
       const f=1/Math.tan(fov/2);
       const nf=1/(near-far);
@@ -364,21 +373,40 @@
     uniform mat4 uModel;
     uniform mat4 uNormalMatrix;
     varying vec3 vNormal;
+    varying vec3 vWorldPos;
     void main(){
       vNormal = mat3(uNormalMatrix) * aNormal;
+      vWorldPos = (uModel * vec4(aPosition,1.0)).xyz;
       gl_Position = uMVP * vec4(aPosition,1.0);
     }`;
     const fsSource=`
     precision mediump float;
     varying vec3 vNormal;
+    varying vec3 vWorldPos;
     uniform vec3 uLightDir;
     uniform vec3 uColor;
     uniform vec3 uAmbient;
     uniform float uAlpha;
+    const int MAX_POINTS = 4;
+    uniform int uPointCount;
+    uniform vec3 uPointPos[MAX_POINTS];
+    uniform float uPointIntensity[MAX_POINTS];
     void main(){
       vec3 n = normalize(vNormal);
       float diff = max(dot(n, normalize(uLightDir)), 0.0);
       vec3 color = uAmbient + uColor * diff;
+      // Point lights from orbs
+      vec3 warm = vec3(1.1, 0.95, 0.5);
+      for (int i=0; i<MAX_POINTS; ++i) {
+        if (i >= uPointCount) break;
+        vec3 L = uPointPos[i] - vWorldPos;
+        float dist = length(L) + 1e-4;
+        vec3 ld = L / dist;
+        float diffP = max(dot(n, ld), 0.0);
+        float atten = uPointIntensity[i] / (1.0 + dist * dist * 0.001);
+        color += warm * diffP * atten;
+      }
+      color = clamp(color, 0.0, 2.5);
       gl_FragColor = vec4(color, uAlpha);
     }`;
 
@@ -415,7 +443,10 @@
       lightDir: gl.getUniformLocation(program, 'uLightDir'),
       color: gl.getUniformLocation(program, 'uColor'),
       ambient: gl.getUniformLocation(program, 'uAmbient'),
-      alpha: gl.getUniformLocation(program, 'uAlpha')
+      alpha: gl.getUniformLocation(program, 'uAlpha'),
+      pointCount: gl.getUniformLocation(program, 'uPointCount'),
+      pointPos: gl.getUniformLocation(program, 'uPointPos'),
+      pointIntensity: gl.getUniformLocation(program, 'uPointIntensity')
     };
 
     function createMesh(geo){
@@ -488,6 +519,8 @@
       }
       return arr;
     })();
+    const orbConfig = { r: 12, count: 4, minCenterDistance: 220, touchRadius: 22 };
+    const orbs = [];
     const keys = new Set();
     const history = [];
     const maxHistoryFrames = 900; // ~15s at 60fps
@@ -503,7 +536,8 @@
         plane: {
           tilt: { x: plane.tilt.x, y: plane.tilt.y },
           target: { x: plane.targetTilt.x, y: plane.targetTilt.y }
-        }
+        },
+        orbs: orbs.map(o => ({ collected: o.collected, dissolve: o.dissolve }))
       };
     }
 
@@ -518,6 +552,12 @@
       plane.tilt.y = state.plane.tilt.y;
       plane.targetTilt.x = state.plane.target.x;
       plane.targetTilt.y = state.plane.target.y;
+      state.orbs.forEach((o,i) => {
+        if (orbs[i]) {
+          orbs[i].collected = o.collected;
+          orbs[i].dissolve = o.dissolve || 0;
+        }
+      });
     }
 
     function pushHistory() {
@@ -529,6 +569,28 @@
       if (history.length > 1) {
         history.pop(); // discard current
         applyState(history[history.length - 1]);
+      }
+    }
+
+    function checkOrbCollisions() {
+      for (const orb of orbs) {
+        if (orb.collected) continue;
+        const dx = marble.pos.x - orb.pos.x;
+        const dz = marble.pos.z - orb.pos.z;
+        const dist = Math.hypot(dx, dz);
+        const touch = orbConfig.touchRadius || orbConfig.r;
+        if (dist <= marble.r + touch) {
+          orb.collected = true;
+          orb.dissolve = 0;
+        }
+      }
+    }
+
+    function updateOrbs(dt) {
+      for (const orb of orbs) {
+        if (orb.collected) {
+          orb.dissolve = Math.min(1, (orb.dissolve || 0) + dt * 2.5);
+        }
       }
     }
 
@@ -558,6 +620,67 @@
       const hx = pedestalHeightAt(x + eps, z) - pedestalHeightAt(x - eps, z);
       const hz = pedestalHeightAt(x, z + eps) - pedestalHeightAt(x, z - eps);
       return normalize3({ x: -hx, y: eps * 2, z: -hz });
+    }
+
+    function updateLightsUniforms() {
+      const positions = new Float32Array(12); // 4 * 3
+      const intensities = new Float32Array(4);
+      let count = 0;
+      for (const orb of orbs) {
+        if (count >= 4) break;
+        if (orb.collected && orb.dissolve >= 1) continue;
+        const strength = orb.collected ? Math.max(0, 1 - orb.dissolve) * 0.8 : 1.0;
+        positions[count*3+0] = orb.pos.x;
+        positions[count*3+1] = orb.pos.y;
+        positions[count*3+2] = orb.pos.z;
+        intensities[count] = strength;
+        count++;
+      }
+      gl.uniform1i(uniforms.pointCount, count);
+      gl.uniform3fv(uniforms.pointPos, positions);
+      gl.uniform1fv(uniforms.pointIntensity, intensities);
+    }
+
+    function spawnOrbs() {
+      const margin = marble.r + orbConfig.r * 2 + 20;
+      const centerGuard = orbConfig.minCenterDistance;
+      function randomPos() {
+        return {
+          x: (Math.random() * 2 - 1) * (plane.w / 2 - margin),
+          z: (Math.random() * 2 - 1) * (plane.h / 2 - margin)
+        };
+      }
+      while (orbs.length < orbConfig.count) {
+        const p = randomPos();
+        if (Math.hypot(p.x, p.z) < centerGuard) continue;
+        let ok = true;
+        for (const o of orbs) {
+          const dx = o.pos.x - p.x;
+          const dz = o.pos.z - p.z;
+          if (Math.hypot(dx, dz) < (orbConfig.r * 2 + 30)) { ok = false; break; }
+        }
+        if (ok) {
+          const y = pedestalHeightAt(p.x, p.z) + orbConfig.r;
+          const seed = Math.random() * Math.PI * 2;
+          const sats=[];
+          for(let k=0;k<4;k++){
+            // random axis
+            let ax=Math.random()*2-1, ay=Math.random()*2-1, az=Math.random()*2-1;
+            const axisLen=Math.hypot(ax,ay,az)||1;
+            ax/=axisLen; ay/=axisLen; az/=axisLen;
+            // base direction orthogonal to axis
+            let bx=ay, by=-ax, bz=0;
+            if(Math.hypot(bx,by,bz)<1e-3){bx=0; by=az; bz=-ay;}
+            const bl=Math.hypot(bx,by,bz)||1;
+            bx/=bl; by/=bl; bz/=bl;
+            const radius=orbConfig.r*(1.6+Math.random()*0.5);
+            const speed=1.4+Math.random()*0.8;
+            const phase=Math.random()*Math.PI*2;
+            sats.push({axis:{x:ax,y:ay,z:az}, base:{x:bx*radius,y:by*radius,z:bz*radius}, speed, phase});
+          }
+          orbs.push({ pos: { x: p.x, y, z: p.z }, collected: false, dissolve: 0, seed, sats });
+        }
+      }
     }
 
     // Geometry instances
@@ -597,6 +720,7 @@
       if (keys.has('KeyD')) target.x += 1;
       if (keys.has('KeyW')) target.y += 1;
       if (keys.has('KeyS')) target.y -= 1;
+      if (keys.has('Space')) return; // Freeze input accumulation while rewinding
       const len = Math.hypot(target.x, target.y);
       if (len > 1) { target.x /= len; target.y /= len; }
       const smoothing = 12;
@@ -652,6 +776,9 @@
       if (marble.pos.x > maxX) { marble.pos.x = maxX; marble.vel.x *= -0.6; }
       if (marble.pos.z < minZ) { marble.pos.z = minZ; marble.vel.z *= -0.6; }
       if (marble.pos.z > maxZ) { marble.pos.z = maxZ; marble.vel.z *= -0.6; }
+
+      checkOrbCollisions();
+      updateOrbs(dt);
     }
 
     // Render helpers
@@ -705,6 +832,38 @@
       drawMesh(meshes.marble, reflectionM, [0.65,0.7,0.8], [0.05,0.05,0.08], 0.22);
     }
 
+    function drawOrbs(boardM, timeSec) {
+      for (const orb of orbs) {
+        const dissolve = orb.collected ? orb.dissolve : 0;
+        if (dissolve >= 1) continue;
+        // Halo (outer transparent sphere)
+        gl.depthMask(false);
+        gl.disable(gl.DEPTH_TEST);
+        let haloM = boardM;
+        const haloScale = 1.8 + 0.08 * Math.sin(timeSec * 4 + orb.seed);
+        haloM = mat4Translate(haloM, [orb.pos.x, orb.pos.y, orb.pos.z]);
+        haloM = mat4Scale(haloM, [haloScale * (1 - dissolve*0.6), haloScale * (1 - dissolve*0.6), haloScale * (1 - dissolve*0.6)]);
+        drawMesh(meshes.marble, haloM, [1.0,0.85,0.3], [0.22,0.18,0.1], 0.35 * (1 - dissolve));
+
+        // Four orbiting suns (additive-ish)
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+        for (let i=0;i<orb.sats.length;i++){
+          const sat = orb.sats[i];
+          const angle = timeSec * sat.speed + sat.phase;
+          const dir = rotateAroundAxis(sat.base, sat.axis, angle);
+          const sy = dir.y * 0.3 + 2 * Math.sin(timeSec * 3 + i);
+          let sM = boardM;
+          sM = mat4Translate(sM, [orb.pos.x + dir.x, orb.pos.y + sy, orb.pos.z + dir.z]);
+          const sScale = 0.35 * (1 - dissolve);
+          sM = mat4Scale(sM, [sScale, sScale, sScale]);
+          drawMesh(meshes.marble, sM, [1.3,1.05,0.6], [0.25,0.2,0.1], 0.65 * (1 - dissolve));
+        }
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.depthMask(true);
+        gl.enable(gl.DEPTH_TEST);
+      }
+    }
+
     function frame(time) {
       const now = time * 0.001;
       const dt = Math.min(0.033, now - (frame.last || now));
@@ -718,6 +877,7 @@
         updatePhysics(dt);
         pushHistory();
       }
+      updateLightsUniforms();
 
       gl.enable(gl.DEPTH_TEST);
       gl.clearColor(0.02, 0.05, 0.12, 1);
@@ -732,6 +892,7 @@
         pedM = mat4Translate(pedM, [p.x, 0, p.z]);
         drawMesh(meshes.pedestal, pedM, [0.1,0.35,0.8], [0.05,0.06,0.1]);
       }
+      drawOrbs(boardM, now);
       gl.depthMask(false);
       gl.disable(gl.DEPTH_TEST);
       drawMarbleEffects(boardM);
@@ -750,6 +911,7 @@
     }
 
     marble.y = pedestalHeightAt(marble.pos.x, marble.pos.z) + marble.r;
+    spawnOrbs();
     pushHistory();
     setupInput();
     requestAnimationFrame(frame);
