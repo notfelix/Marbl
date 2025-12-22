@@ -13,16 +13,29 @@
       margin: 0;
       display: grid;
       place-items: center;
+      position: relative;
+      overflow: hidden;
       background: radial-gradient(circle at 30% 20%, #0c1224 0%, var(--bg) 55%);
       color: #e5ecff;
       font-family: "Inter", system-ui, -apple-system, sans-serif;
       height: 100vh;
     }
-    canvas {
+    #stars {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      display: block;
+      pointer-events: none;
+      z-index: 0;
+    }
+    #c {
       width: 1024px;
       height: 1024px;
       background: transparent;
       display: block;
+      position: relative;
+      z-index: 1;
     }
     .hud {
       position: absolute;
@@ -35,18 +48,113 @@
       color: rgba(229, 236, 255, 0.6);
       pointer-events: none;
       text-shadow: 0 1px 8px rgba(0,0,0,0.35);
+      z-index: 2;
     }
   </style>
 </head>
 <body>
+  <canvas id="stars"></canvas>
   <div class="hud">WASD to tilt the plane</div>
   <canvas id="c" width="1024" height="1024"></canvas>
   <script>
+    const starCanvas = document.getElementById('stars');
     const canvas = document.getElementById('c');
+    const starCtx = starCanvas.getContext('2d');
     const gl = canvas.getContext('webgl2', { antialias: true, alpha: true });
     if (!gl) {
       alert('WebGL2 not supported');
       throw new Error('WebGL2 not supported');
+    }
+
+    const starConfig = {
+      density: 0.00014,
+      minSpeed: 8,
+      maxSpeed: 18,
+      minSize: 0.6,
+      maxSize: 1.6,
+      margin: 32
+    };
+    const stars = [];
+    let starTargetCount = 0;
+    let starAreaWidth = 0;
+    let starAreaHeight = 0;
+
+    function resetStar(star, anywhere=false) {
+      const w = starAreaWidth || window.innerWidth;
+      const h = starAreaHeight || window.innerHeight;
+      const margin = starConfig.margin;
+      const speed = starConfig.minSpeed + Math.random() * (starConfig.maxSpeed - starConfig.minSpeed);
+      star.size = starConfig.minSize + Math.random() * (starConfig.maxSize - starConfig.minSize);
+      star.alpha = 0.25 + Math.random() * 0.45;
+      let angle = Math.random() * Math.PI * 2;
+      if (!anywhere) {
+        const side = Math.floor(Math.random() * 4);
+        const spread = Math.PI / 3;
+        switch (side) {
+          case 0: star.x = -margin; star.y = Math.random() * h; angle = 0; break;
+          case 1: star.x = w + margin; star.y = Math.random() * h; angle = Math.PI; break;
+          case 2: star.x = Math.random() * w; star.y = -margin; angle = Math.PI / 2; break;
+          default: star.x = Math.random() * w; star.y = h + margin; angle = -Math.PI / 2; break;
+        }
+        angle += (Math.random() - 0.5) * spread;
+      } else {
+        star.x = Math.random() * w;
+        star.y = Math.random() * h;
+      }
+      star.vx = Math.cos(angle) * speed;
+      star.vy = Math.sin(angle) * speed;
+    }
+
+    function makeStar(fillArea=false) {
+      const s = { x: 0, y: 0, vx: 0, vy: 0, size: 1, alpha: 1 };
+      resetStar(s, fillArea);
+      return s;
+    }
+
+    function adjustStarCount(fillArea=false) {
+      if (stars.length > starTargetCount) {
+        stars.length = starTargetCount;
+      } else {
+        while (stars.length < starTargetCount) stars.push(makeStar(fillArea));
+      }
+    }
+
+    function resizeStars() {
+      const dpr = window.devicePixelRatio || 1;
+      starAreaWidth = window.innerWidth;
+      starAreaHeight = window.innerHeight;
+      starCanvas.style.width = `${starAreaWidth}px`;
+      starCanvas.style.height = `${starAreaHeight}px`;
+      starCanvas.width = Math.round(starAreaWidth * dpr);
+      starCanvas.height = Math.round(starAreaHeight * dpr);
+      starCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      starTargetCount = Math.max(80, Math.floor(starAreaWidth * starAreaHeight * starConfig.density));
+      adjustStarCount(true);
+    }
+
+    function updateStars(dt) {
+      const w = starAreaWidth;
+      const h = starAreaHeight;
+      const margin = starConfig.margin;
+      for (const s of stars) {
+        s.x += s.vx * dt;
+        s.y += s.vy * dt;
+        if (s.x < -margin || s.x > w + margin || s.y < -margin || s.y > h + margin) {
+          resetStar(s);
+        }
+      }
+    }
+
+    function drawStars() {
+      starCtx.clearRect(0, 0, starAreaWidth, starAreaHeight);
+      starCtx.fillStyle = '#d7e1ff';
+      for (const s of stars) {
+        starCtx.globalAlpha = s.alpha;
+        starCtx.beginPath();
+        starCtx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+        starCtx.fill();
+      }
+      starCtx.globalAlpha = 1;
     }
 
     // HiDPI handling
@@ -59,6 +167,7 @@
       canvas.width = displayW * dpr;
       canvas.height = displayH * dpr;
       gl.viewport(0, 0, canvas.width, canvas.height);
+      resizeStars();
     }
     resize();
     window.addEventListener('resize', resize);
@@ -537,7 +646,8 @@
           tilt: { x: plane.tilt.x, y: plane.tilt.y },
           target: { x: plane.targetTilt.x, y: plane.targetTilt.y }
         },
-        orbs: orbs.map(o => ({ collected: o.collected, dissolve: o.dissolve }))
+        orbs: orbs.map(o => ({ collected: o.collected, dissolve: o.dissolve })),
+        stars: stars.map(s => ({ x: s.x, y: s.y, vx: s.vx, vy: s.vy, size: s.size, alpha: s.alpha }))
       };
     }
 
@@ -558,6 +668,20 @@
           orbs[i].dissolve = o.dissolve || 0;
         }
       });
+      if (state.stars) {
+        stars.length = state.stars.length;
+        for (let i = 0; i < state.stars.length; i++) {
+          const src = state.stars[i];
+          let dst = stars[i];
+          if (!dst) dst = stars[i] = { x: 0, y: 0, vx: 0, vy: 0, size: 1, alpha: 1 };
+          dst.x = src.x;
+          dst.y = src.y;
+          dst.vx = src.vx;
+          dst.vy = src.vy;
+          dst.size = src.size;
+          dst.alpha = src.alpha;
+        }
+      }
     }
 
     function pushHistory() {
@@ -875,12 +999,14 @@
       } else {
         updateInput(dt);
         updatePhysics(dt);
+        updateStars(dt);
         pushHistory();
       }
+      drawStars();
       updateLightsUniforms();
 
       gl.enable(gl.DEPTH_TEST);
-      gl.clearColor(0.02, 0.05, 0.12, 1);
+      gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
       const boardM = boardTransform();
