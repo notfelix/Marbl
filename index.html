@@ -785,6 +785,13 @@
       return pedestal.height * (1 - eased);
     }
 
+    function centralPedestalAlpha(progress) {
+      const fadeStart = 0.18; // keep visible while it starts folding, then fade out
+      if (progress <= fadeStart) return 1;
+      const t = (progress - fadeStart) / (1 - fadeStart);
+      return Math.max(0, 1 - t);
+    }
+
     function pedestalHeightForIndex(idx, applyCollapse=true) {
       if (applyCollapse && idx === centralPedestalIndex && centralPedestalIndex !== -1) {
         return currentCentralPedestalHeight();
@@ -1247,11 +1254,12 @@
           const height = pedestalHeightForIndex(i, level.applyCollapse);
           const isCentral = level.applyCollapse && i === centralPedestalIndex;
           const pedMesh = (isCentral && collapseProgress > 0) ? meshes.pedestalHole : meshes.pedestal;
+          const pedAlpha = isCentral ? entry.alpha * centralPedestalAlpha(collapseProgress) : entry.alpha;
           let pedM = matrix;
           pedM = mat4Translate(pedM, [p.x, 0, p.z]);
           pedM = mat4Scale(pedM, [1, height / pedestal.height, 1]);
           const pedColor = (isCentral && collapseProgress > 0) ? [0.05,0.18,0.5] : [0.1,0.35,0.8];
-          drawMesh(pedMesh, pedM, pedColor, [0.05,0.06,0.1], entry.alpha);
+          drawMesh(pedMesh, pedM, pedColor, [0.05,0.06,0.1], pedAlpha);
         }
         drawOrbs(matrix, orbAnimTime, level.index, entry.alpha);
       }
