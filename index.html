@@ -667,6 +667,8 @@
     let orbAnimTime = 0;
     let debugSkippedOrbBatches = 0;
     let currentSupport = null;
+    let lastGroundedLevel = null;
+    let lastGroundSurfaceHeight = null;
 
     function captureState() {
       return {
@@ -739,7 +741,7 @@
     }
 
     function checkOrbCollisions() {
-      const currentLevelIndex = currentSupport?.level?.index ?? 0;
+      const currentLevelIndex = getActiveLevel()?.index ?? 0;
       for (const orb of orbs) {
         if (orb.level !== currentLevelIndex) continue;
         if (orb.collected) continue;
@@ -889,7 +891,16 @@
 
     function refreshSupport() {
       currentSupport = calculateSupport(marble.pos.x, marble.pos.z, marble.y);
+      if ((currentSupport?.support ?? 0) > 0.01 && Number.isFinite(currentSupport.surfaceHeight)) {
+        lastGroundedLevel = currentSupport.level || lastGroundedLevel || levels[0];
+        lastGroundSurfaceHeight = currentSupport.surfaceHeight;
+      }
       return currentSupport;
+    }
+
+    function isAirborne() {
+      const support = currentSupport?.support ?? 0;
+      return !Number.isFinite(currentSupport?.surfaceHeight) || support < 0.01;
     }
 
     function updateCentralCollapse(dt) {
@@ -906,7 +917,7 @@
       const positions = new Float32Array(12); // 4 * 3
       const intensities = new Float32Array(4);
       let count = 0;
-      const currentLevelIndex = currentSupport?.level?.index ?? 0;
+      const currentLevelIndex = getActiveLevel()?.index ?? 0;
       for (const orb of orbs) {
         if (count >= 4) break;
         if (orb.level !== currentLevelIndex) continue;
@@ -1012,6 +1023,11 @@
       if (keys.has('KeyW')) target.y += 1;
       if (keys.has('KeyS')) target.y -= 1;
       if (keys.has('Space')) return; // Freeze input accumulation while rewinding
+      const supportTilt = isAirborne()
+        ? 1 // let the plane still respond to input while falling
+        : Math.max(0, Math.min(1, currentSupport?.support ?? 0));
+      target.x *= supportTilt;
+      target.y *= supportTilt;
       const len = Math.hypot(target.x, target.y);
       if (len > 1) { target.x /= len; target.y /= len; }
       const smoothing = 12;
@@ -1034,9 +1050,11 @@
       currentSupport = supportInfo;
       const support = supportInfo.support;
       const supportLevel = supportInfo.level;
+      const airborne = isAirborne();
 
-      let ax = -tiltAccel * Math.sin(plane.tilt.x) * (0.35 + 0.65 * support);
-      let az = tiltAccel * Math.sin(plane.tilt.y) * (0.35 + 0.65 * support);
+      const tiltScale = airborne ? 0 : (0.35 + 0.65 * support);
+      let ax = -tiltAccel * Math.sin(plane.tilt.x) * tiltScale;
+      let az = tiltAccel * Math.sin(plane.tilt.y) * tiltScale;
 
       const eps = 2;
       const left = levelHeightAt(supportLevel, marble.pos.x - eps, marble.pos.z);
@@ -1091,6 +1109,11 @@
     }
 
     // Render helpers
+    function getActiveLevel() {
+      if (isAirborne()) return lastGroundedLevel || currentSupport?.level || levels[0];
+      return currentSupport?.level || lastGroundedLevel || levels[0];
+    }
+
     function setMatrices(model) {
       const aspect = canvas.width / canvas.height;
       const proj = mat4Perspective(Math.PI / 4, aspect, 10, 5000);
@@ -1133,15 +1156,19 @@
     }
 
     function drawMarbleEffects(boardM) {
-      const supportLevel = currentSupport?.level || levels[0];
+      const supportLevel = getActiveLevel();
       const levelY = supportLevel.y || 0;
-      const surfaceY = Number.isFinite(currentSupport?.surfaceHeight) ? currentSupport.surfaceHeight : levelHeightAt(supportLevel, marble.pos.x, marble.pos.z);
+      const surfaceY = isAirborne()
+        ? lastGroundSurfaceHeight
+        : (Number.isFinite(currentSupport?.surfaceHeight) ? currentSupport.surfaceHeight : levelHeightAt(supportLevel, marble.pos.x, marble.pos.z));
       const planeY = Number.isFinite(surfaceY) ? surfaceY : (marble.y - marble.r);
       const normal = levelNormalAt(supportLevel, marble.pos.x, marble.pos.z);
       const orient = mat4FromNormal(normal);
       // Soft blob shadow aligned to surface
       const shadowOffset = 1.2;
-      const altitude = Number.isFinite(currentSupport?.altitude) ? currentSupport.altitude : (Number.isFinite(surfaceY) ? marble.y - (surfaceY + marble.r) : Infinity);
+      const altitude = isAirborne()
+        ? (Number.isFinite(surfaceY) ? marble.y - (surfaceY + marble.r) : Infinity)
+        : (Number.isFinite(currentSupport?.altitude) ? currentSupport.altitude : (Number.isFinite(surfaceY) ? marble.y - (surfaceY + marble.r) : Infinity));
       const shadowStrength = Number.isFinite(altitude) ? Math.max(0, Math.min(1, 1 - Math.max(0, altitude) / (marble.r * 2.5))) : 0;
       let shadowM = boardM;
       shadowM = mat4Translate(shadowM, [marble.pos.x, planeY - levelY + shadowOffset, marble.pos.z]);
@@ -1217,7 +1244,8 @@
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
       const collapseProgress = centralCollapseEase();
-      const onLowerLevel = (currentSupport?.level?.index ?? 0) > 0;
+      const activeLevel = getActiveLevel();
+      const onLowerLevel = (activeLevel?.index ?? 0) > 0;
       const fadeDepth = levelDrop * 0.75; // fade out as we fall roughly three quarters of a level
       const topFade = centralCollapse.started
         ? Math.max(0, Math.min(1, 1 + marble.y / fadeDepth))
@@ -1267,7 +1295,7 @@
       }
       gl.depthMask(true);
 
-      const activeLevelY = currentSupport?.level?.y || 0;
+      const activeLevelY = activeLevel?.y || 0;
       const tiltM = boardTransform(activeLevelY);
       gl.depthMask(false);
       gl.disable(gl.DEPTH_TEST);
