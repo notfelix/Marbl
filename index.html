@@ -645,20 +645,27 @@
     })();
     const centralPedestalIndex = pedestalPositions.findIndex(p => Math.abs(p.x) < 1e-3 && Math.abs(p.z) < 1e-3);
     const centralPedestalPos = centralPedestalIndex >= 0 ? pedestalPositions[centralPedestalIndex] : { x: 0, z: 0 };
+    const levelDrop = plane.w;
     const centralCollapse = {
       started: false,
       progress: 0,
       speed: 0.5,
-      holeDepth: pedestal.height * 1.4
+      holeDepth: pedestal.height * 0.25
     };
     const centralHoleRadius = pedestalFootprint * 1.05;
     const centralHoleSoftness = pedestal.ramp * 0.35;
+    const levels = [
+      { y: 0, applyCollapse: true, hasHole: true },
+      { y: -levelDrop, applyCollapse: false, hasHole: false }
+    ];
+    levels.forEach((lvl, i) => lvl.index = i);
     const orbConfig = { r: 12, count: 4, minCenterDistance: 220, touchRadius: 22 };
     const orbs = [];
     const keys = new Set();
     const history = [];
     const maxHistoryFrames = 900; // ~15s at 60fps
     let orbAnimTime = 0;
+    let currentSupport = null;
 
     function captureState() {
       return {
@@ -672,7 +679,7 @@
           tilt: { x: plane.tilt.x, y: plane.tilt.y },
           target: { x: plane.targetTilt.x, y: plane.targetTilt.y }
         },
-        orbs: orbs.map(o => ({ collected: o.collected, dissolve: o.dissolve })),
+        orbs: orbs.map(o => ({ level: o.level, collected: o.collected, dissolve: o.dissolve })),
         stars: stars.map(s => ({ x: s.x, y: s.y, vx: s.vx, vy: s.vy, size: s.size, alpha: s.alpha })),
         centralCollapse: { started: centralCollapse.started, progress: centralCollapse.progress },
         orbAnimTime
@@ -695,6 +702,7 @@
         if (orbs[i]) {
           orbs[i].collected = o.collected;
           orbs[i].dissolve = o.dissolve || 0;
+          orbs[i].level = o.level ?? orbs[i].level;
         }
       });
       if (state.stars) {
@@ -730,7 +738,9 @@
     }
 
     function checkOrbCollisions() {
+      const currentLevelIndex = currentSupport?.level?.index ?? 0;
       for (const orb of orbs) {
+        if (orb.level !== currentLevelIndex) continue;
         if (orb.collected) continue;
         const dx = marble.pos.x - orb.pos.x;
         const dz = marble.pos.z - orb.pos.z;
@@ -758,12 +768,11 @@
 
     function currentCentralPedestalHeight() {
       const eased = centralCollapseEase();
-      const target = -centralCollapse.holeDepth;
-      return pedestal.height + (target - pedestal.height) * eased;
+      return pedestal.height * (1 - eased);
     }
 
-    function pedestalHeightForIndex(idx) {
-      if (idx === centralPedestalIndex && centralPedestalIndex !== -1) {
+    function pedestalHeightForIndex(idx, applyCollapse=true) {
+      if (applyCollapse && idx === centralPedestalIndex && centralPedestalIndex !== -1) {
         return currentCentralPedestalHeight();
       }
       return pedestal.height;
@@ -781,25 +790,90 @@
       const ratio = 1 - Math.min(1, t / ramp);
       return height * ratio;
     }
-    function pedestalHeightAt(x, z) {
+    function pedestalHeightAt(x, z, applyCollapse=true) {
       let maxH = -Infinity;
       for (let i=0;i<pedestalPositions.length;i++) {
         const p = pedestalPositions[i];
-        const h = pedestalHeightAtLocal(x - p.x, z - p.z, pedestalHeightForIndex(i));
+        const h = pedestalHeightAtLocal(x - p.x, z - p.z, pedestalHeightForIndex(i, applyCollapse));
         if (h > maxH) maxH = h;
       }
       return maxH === -Infinity ? 0 : maxH;
     }
-    function pedestalNormalAt(x, z) {
+    function pedestalNormalAt(x, z, applyCollapse=true) {
       const eps = 2;
-      const h = pedestalHeightAt(x, z);
-      const hx = pedestalHeightAt(x + eps, z) - pedestalHeightAt(x - eps, z);
-      const hz = pedestalHeightAt(x, z + eps) - pedestalHeightAt(x, z - eps);
+      const h = pedestalHeightAt(x, z, applyCollapse);
+      const hx = pedestalHeightAt(x + eps, z, applyCollapse) - pedestalHeightAt(x - eps, z, applyCollapse);
+      const hz = pedestalHeightAt(x, z + eps, applyCollapse) - pedestalHeightAt(x, z - eps, applyCollapse);
       return normalize3({ x: -hx, y: eps * 2, z: -hz });
     }
 
+    function currentHoleRadius() {
+      return centralHoleRadius * centralCollapseEase();
+    }
+
+    function isPointInCentralHole(x, z) {
+      if (!centralCollapse.started) return false;
+      const radius = currentHoleRadius();
+      const openRadius = radius - centralHoleSoftness * 0.35;
+      if (openRadius <= 0) return false;
+      const dx = Math.abs(x - centralPedestalPos.x);
+      const dz = Math.abs(z - centralPedestalPos.z);
+      const dist = Math.max(dx, dz);
+      return dist < openRadius;
+    }
+
+    function levelHeightAt(level, x, z) {
+      if (level.hasHole && isPointInCentralHole(x, z)) return -Infinity;
+      const h = pedestalHeightAt(x, z, level.applyCollapse);
+      return h + level.y;
+    }
+
+    function levelNormalAt(level, x, z) {
+      const eps = 2;
+      const h = levelHeightAt(level, x, z);
+      if (!Number.isFinite(h)) return { x: 0, y: 1, z: 0 };
+      const hx = levelHeightAt(level, x + eps, z) - levelHeightAt(level, x - eps, z);
+      const hz = levelHeightAt(level, x, z + eps) - levelHeightAt(level, x, z - eps);
+      return normalize3({ x: -hx, y: eps * 2, z: -hz });
+    }
+
+    function findSupportSurface(x, z, y) {
+      let best = null;
+      const maxRise = marble.r * 1.5;
+      for (const level of levels) {
+        const surface = levelHeightAt(level, x, z);
+        if (!Number.isFinite(surface)) continue;
+        if (surface > y + maxRise) continue; // ignore surfaces too far above current height
+        if (!best || surface > best.height) {
+          best = { level, height: surface };
+        }
+      }
+      return best;
+    }
+
+    function calculateSupport(x, z, y) {
+      const surface = findSupportSurface(x, z, y);
+      const surfaceHeight = surface ? surface.height : -Infinity;
+      const groundHeight = Number.isFinite(surfaceHeight) ? surfaceHeight + marble.r : -Infinity;
+      const altitude = Number.isFinite(surfaceHeight) ? y - groundHeight : Infinity;
+      const support = Number.isFinite(surfaceHeight) ? Math.max(0, Math.min(1, 1 - altitude / (marble.r * 1.5))) : 0;
+      return {
+        level: surface?.level || levels[0],
+        surfaceHeight,
+        groundHeight,
+        altitude,
+        support
+      };
+    }
+
+    function refreshSupport() {
+      currentSupport = calculateSupport(marble.pos.x, marble.pos.z, marble.y);
+      return currentSupport;
+    }
+
     function updateCentralCollapse(dt) {
-      if (!centralCollapse.started && orbs.length === orbConfig.count && orbs.every(o => o.collected)) {
+      const topOrbs = orbs.filter(o => (o.level ?? 0) === 0);
+      if (!centralCollapse.started && topOrbs.length >= orbConfig.count && topOrbs.every(o => o.collected)) {
         centralCollapse.started = true;
       }
       if (centralCollapse.started) {
@@ -811,12 +885,14 @@
       const positions = new Float32Array(12); // 4 * 3
       const intensities = new Float32Array(4);
       let count = 0;
+      const currentLevelIndex = currentSupport?.level?.index ?? 0;
       for (const orb of orbs) {
         if (count >= 4) break;
+        if (orb.level !== currentLevelIndex) continue;
         if (orb.collected && orb.dissolve >= 1) continue;
         const strength = orb.collected ? Math.max(0, 1 - orb.dissolve) * 0.8 : 1.0;
         positions[count*3+0] = orb.pos.x;
-        positions[count*3+1] = orb.pos.y;
+        positions[count*3+1] = orb.pos.y + (levels[orb.level]?.y || 0);
         positions[count*3+2] = orb.pos.z;
         intensities[count] = strength;
         count++;
@@ -826,7 +902,8 @@
       gl.uniform1fv(uniforms.pointIntensity, intensities);
     }
 
-    function spawnOrbs() {
+    function spawnOrbsForLevel(levelIndex=0) {
+      const level = levels[levelIndex] || levels[0];
       const margin = marble.r + orbConfig.r * 2 + 20;
       const centerGuard = orbConfig.minCenterDistance;
       function randomPos() {
@@ -835,7 +912,8 @@
           z: (Math.random() * 2 - 1) * (plane.h / 2 - margin)
         };
       }
-      while (orbs.length < orbConfig.count) {
+      const countForLevel = () => orbs.filter(o => o.level === levelIndex).length;
+      while (countForLevel() < orbConfig.count) {
         const p = randomPos();
         if (Math.hypot(p.x, p.z) < centerGuard) continue;
         let ok = true;
@@ -845,7 +923,7 @@
           if (Math.hypot(dx, dz) < (orbConfig.r * 2 + 30)) { ok = false; break; }
         }
         if (ok) {
-          const y = pedestalHeightAt(p.x, p.z) + orbConfig.r;
+          const yLocal = (levelHeightAt(level, p.x, p.z) - level.y) + orbConfig.r;
           const seed = Math.random() * Math.PI * 2;
           const sats=[];
           for(let k=0;k<4;k++){
@@ -863,7 +941,7 @@
             const phase=Math.random()*Math.PI*2;
             sats.push({axis:{x:ax,y:ay,z:az}, base:{x:bx*radius,y:by*radius,z:bz*radius}, speed, phase});
           }
-          orbs.push({ pos: { x: p.x, y, z: p.z }, collected: false, dissolve: 0, seed, sats });
+          orbs.push({ level: levelIndex, pos: { x: p.x, y: yLocal, z: p.z }, collected: false, dissolve: 0, seed, sats });
         }
       }
     }
@@ -894,7 +972,13 @@
     // Camera/light
     const lightDir = normalize3({ x: -0.4, y: 0.8, z: 0.3 });
     // Keep the camera directly overhead for a top-down view; nudge z to avoid colinearity with the up vector
-    const camera = { pos: { x: 0, y: 1500, z: 1 }, target: { x: 0, y: 0, z: 0 } };
+    const camera = {
+      pos: { x: 0, y: 1500, z: 1 },
+      target: { x: 0, y: 0, z: 0 },
+      baseHeight: 1500,
+      followRatio: 0.9,
+      smooth: 2.6
+    };
 
     // Input and physics
     function updateInput(dt) {
@@ -914,18 +998,32 @@
       plane.tilt.y += (target.y * plane.maxTilt - plane.tilt.y) * dt * smoothing;
     }
 
+    function updateCamera(dt) {
+      const follow = camera.followRatio;
+      const desiredPosY = camera.baseHeight + marble.y * follow;
+      const desiredTargetY = marble.y * follow * 0.6;
+      const smooth = camera.smooth;
+      camera.pos.y += (desiredPosY - camera.pos.y) * dt * smooth;
+      camera.target.y += (desiredTargetY - camera.target.y) * dt * smooth;
+    }
+
     function updatePhysics(dt) {
       const tiltAccel = 240;
-      const groundHeight = pedestalHeightAt(marble.pos.x, marble.pos.z) + marble.r;
-      const altitude = marble.y - groundHeight;
-      const support = Math.max(0, Math.min(1, 1 - altitude / (marble.r * 1.5)));
+      const supportInfo = calculateSupport(marble.pos.x, marble.pos.z, marble.y);
+      currentSupport = supportInfo;
+      const support = supportInfo.support;
+      const supportLevel = supportInfo.level;
 
       let ax = -tiltAccel * Math.sin(plane.tilt.x) * (0.35 + 0.65 * support);
       let az = tiltAccel * Math.sin(plane.tilt.y) * (0.35 + 0.65 * support);
 
       const eps = 2;
-      const dhdx = (pedestalHeightAt(marble.pos.x + eps, marble.pos.z) - pedestalHeightAt(marble.pos.x - eps, marble.pos.z)) / (2 * eps);
-      const dhdz = (pedestalHeightAt(marble.pos.x, marble.pos.z + eps) - pedestalHeightAt(marble.pos.x, marble.pos.z - eps)) / (2 * eps);
+      const left = levelHeightAt(supportLevel, marble.pos.x - eps, marble.pos.z);
+      const right = levelHeightAt(supportLevel, marble.pos.x + eps, marble.pos.z);
+      const forward = levelHeightAt(supportLevel, marble.pos.x, marble.pos.z + eps);
+      const back = levelHeightAt(supportLevel, marble.pos.x, marble.pos.z - eps);
+      const dhdx = (Number.isFinite(right) && Number.isFinite(left)) ? (right - left) / (2 * eps) : 0;
+      const dhdz = (Number.isFinite(forward) && Number.isFinite(back)) ? (forward - back) / (2 * eps) : 0;
       const slopeScale = pedestal.slopeGravity * support;
       ax += -slopeScale * dhdx;
       az += -slopeScale * dhdz;
@@ -946,10 +1044,12 @@
       marble.vy -= gravityY * dt;
       marble.y += marble.vy * dt;
 
-      const newGround = pedestalHeightAt(marble.pos.x, marble.pos.z) + marble.r;
-      if (marble.y <= newGround) {
+      let landingSupport = refreshSupport();
+      const newGround = landingSupport.groundHeight;
+      if (Number.isFinite(newGround) && marble.y <= newGround) {
         marble.y = newGround;
         if (marble.vy < 0) marble.vy = 0;
+        landingSupport = refreshSupport();
       }
 
       const { w, h } = plane;
@@ -966,6 +1066,7 @@
       checkOrbCollisions();
       updateOrbs(dt);
       updateCentralCollapse(dt);
+      refreshSupport();
     }
 
     // Render helpers
@@ -1002,36 +1103,43 @@
       gl.drawElements(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0);
     }
 
-    function boardTransform() {
+    function boardTransform(offsetY=0) {
       let m = mat4Identity();
+      m = mat4Translate(m, [0, offsetY, 0]);
       m = mat4RotateX(m, plane.tilt.y * 0.35);
       m = mat4RotateZ(m, plane.tilt.x * 0.35);
       return m;
     }
 
     function drawMarbleEffects(boardM) {
-      const planeY = pedestalHeightAt(marble.pos.x, marble.pos.z);
-      const normal = pedestalNormalAt(marble.pos.x, marble.pos.z);
+      const supportLevel = currentSupport?.level || levels[0];
+      const levelY = supportLevel.y || 0;
+      const surfaceY = Number.isFinite(currentSupport?.surfaceHeight) ? currentSupport.surfaceHeight : levelHeightAt(supportLevel, marble.pos.x, marble.pos.z);
+      const planeY = Number.isFinite(surfaceY) ? surfaceY : (marble.y - marble.r);
+      const normal = levelNormalAt(supportLevel, marble.pos.x, marble.pos.z);
       const orient = mat4FromNormal(normal);
       // Soft blob shadow aligned to surface
       const shadowOffset = 1.2;
+      const altitude = Number.isFinite(currentSupport?.altitude) ? currentSupport.altitude : (Number.isFinite(surfaceY) ? marble.y - (surfaceY + marble.r) : Infinity);
+      const shadowStrength = Number.isFinite(altitude) ? Math.max(0, Math.min(1, 1 - Math.max(0, altitude) / (marble.r * 2.5))) : 0;
       let shadowM = boardM;
-      shadowM = mat4Translate(shadowM, [marble.pos.x, planeY + shadowOffset, marble.pos.z]);
+      shadowM = mat4Translate(shadowM, [marble.pos.x, planeY - levelY + shadowOffset, marble.pos.z]);
       shadowM = mat4Multiply(shadowM, orient);
       shadowM = mat4Scale(shadowM, [1.08, 0.08, 1.08]);
-      drawMesh(meshes.marble, shadowM, [0,0,0], [0,0,0], 0.38);
+      drawMesh(meshes.marble, shadowM, [0,0,0], [0,0,0], 0.38 * shadowStrength);
       // Reflection (mirror across the local surface plane)
       const distanceAbove = marble.y - planeY;
       const reflectionY = planeY - distanceAbove + 1.2;
       let reflectionM = boardM;
-      reflectionM = mat4Translate(reflectionM, [marble.pos.x, reflectionY, marble.pos.z]);
+      reflectionM = mat4Translate(reflectionM, [marble.pos.x, reflectionY - levelY, marble.pos.z]);
       reflectionM = mat4Multiply(reflectionM, orient);
       reflectionM = mat4Scale(reflectionM, [1, -1, 1]);
-      drawMesh(meshes.marble, reflectionM, [0.65,0.7,0.8], [0.05,0.05,0.08], 0.22);
+      drawMesh(meshes.marble, reflectionM, [0.65,0.7,0.8], [0.05,0.05,0.08], 0.22 * Math.max(0, shadowStrength * 0.58));
     }
 
-    function drawOrbs(boardM, orbTime) {
+    function drawOrbs(boardM, orbTime, levelIndex=0, alpha=1) {
       for (const orb of orbs) {
+        if (orb.level !== levelIndex) continue;
         const dissolve = orb.collected ? orb.dissolve : 0;
         if (dissolve >= 1) continue;
         // Halo (outer transparent sphere)
@@ -1041,7 +1149,7 @@
         const haloScale = 1.8 + 0.08 * Math.sin(orbTime * 4 + orb.seed);
         haloM = mat4Translate(haloM, [orb.pos.x, orb.pos.y, orb.pos.z]);
         haloM = mat4Scale(haloM, [haloScale * (1 - dissolve*0.6), haloScale * (1 - dissolve*0.6), haloScale * (1 - dissolve*0.6)]);
-        drawMesh(meshes.marble, haloM, [1.0,0.85,0.3], [0.22,0.18,0.1], 0.35 * (1 - dissolve));
+        drawMesh(meshes.marble, haloM, [1.0,0.85,0.3], [0.22,0.18,0.1], alpha * 0.35 * (1 - dissolve));
 
         // Four orbiting suns (additive-ish)
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
@@ -1054,7 +1162,7 @@
           sM = mat4Translate(sM, [orb.pos.x + dir.x, orb.pos.y + sy, orb.pos.z + dir.z]);
           const sScale = 0.35 * (1 - dissolve);
           sM = mat4Scale(sM, [sScale, sScale, sScale]);
-          drawMesh(meshes.marble, sM, [1.3,1.05,0.6], [0.25,0.2,0.1], 0.65 * (1 - dissolve));
+          drawMesh(meshes.marble, sM, [1.3,1.05,0.6], [0.25,0.2,0.1], alpha * 0.65 * (1 - dissolve));
         }
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         gl.depthMask(true);
@@ -1071,6 +1179,7 @@
       const rewinding = keys.has('Space');
       if (rewinding) {
         rewindStep();
+        refreshSupport();
       } else {
         updateInput(dt);
         updatePhysics(dt);
@@ -1078,6 +1187,7 @@
         orbAnimTime += delta;
         pushHistory();
       }
+      updateCamera(dt);
       drawStars();
       updateLightsUniforms();
 
@@ -1086,34 +1196,62 @@
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
       const collapseProgress = centralCollapseEase();
+      const onLowerLevel = (currentSupport?.level?.index ?? 0) > 0 || marble.y < -levelDrop * 0.35;
+      const topFadeBase = centralCollapse.started ? Math.max(0, Math.min(1, 1 + marble.y / (levelDrop * 0.85))) : 1;
+      const topFade = onLowerLevel ? 0 : topFadeBase;
       const holeMask = {
         center: { x: centralPedestalPos.x, y: 0, z: centralPedestalPos.z },
         radius: centralHoleRadius,
         softness: centralHoleSoftness,
         progress: collapseProgress
       };
-      const boardM = boardTransform();
-      drawMesh(meshes.floor, boardM, [0.07, 0.28, 0.7], [0.04,0.06,0.1], 1.0, holeMask);
-      const wallColor=[0.08,0.22,0.6];
-      for(const w of meshes.walls) drawMesh(w, boardM, wallColor, [0.04,0.05,0.09]);
-      for(let i=0;i<pedestalPositions.length;i++){
-        const p = pedestalPositions[i];
-        const height = pedestalHeightForIndex(i);
-        const pedMesh = (i === centralPedestalIndex && height < 0) ? meshes.pedestalHole : meshes.pedestal;
-        let pedM = boardM;
-        pedM = mat4Translate(pedM, [p.x, 0, p.z]);
-        pedM = mat4Scale(pedM, [1, height / pedestal.height, 1]);
-        const pedColor = (i === centralPedestalIndex && height < 0) ? [0.05,0.18,0.5] : [0.1,0.35,0.8];
-        drawMesh(pedMesh, pedM, pedColor, [0.05,0.06,0.1]);
+
+      const boardEntries = [];
+      if (centralCollapse.started) {
+        boardEntries.push({ level: levels[1], matrix: boardTransform(levels[1].y), mask: null, alpha: 1 });
       }
-      drawOrbs(boardM, orbAnimTime);
+      if (topFade > 0.001) {
+        boardEntries.push({ level: levels[0], matrix: boardTransform(levels[0].y), mask: holeMask, alpha: topFade });
+      }
+      if (centralCollapse.started) {
+        if (!boardEntries.some(b => b.level.index === 1)) {
+          boardEntries.push({ level: levels[1], matrix: boardTransform(levels[1].y), mask: null, alpha: 1 });
+        }
+      }
+
+      const wallColorTop=[0.08,0.22,0.6];
+      const wallColorBottom=[0.06,0.18,0.5];
+      for (const entry of boardEntries) {
+        const { level, matrix, mask } = entry;
+        const floorColor = level === levels[0] ? [0.07, 0.28, 0.7] : [0.06, 0.24, 0.62];
+        gl.depthMask(entry.alpha >= 0.999);
+        drawMesh(meshes.floor, matrix, floorColor, [0.04,0.06,0.1], entry.alpha, level.hasHole ? mask : null);
+        const wallColor = level === levels[0] ? wallColorTop : wallColorBottom;
+        for(const w of meshes.walls) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
+        for(let i=0;i<pedestalPositions.length;i++){
+          const p = pedestalPositions[i];
+          const height = pedestalHeightForIndex(i, level.applyCollapse);
+          const isCentral = level.applyCollapse && i === centralPedestalIndex;
+          const pedMesh = (isCentral && collapseProgress > 0) ? meshes.pedestalHole : meshes.pedestal;
+          let pedM = matrix;
+          pedM = mat4Translate(pedM, [p.x, 0, p.z]);
+          pedM = mat4Scale(pedM, [1, height / pedestal.height, 1]);
+          const pedColor = (isCentral && collapseProgress > 0) ? [0.05,0.18,0.5] : [0.1,0.35,0.8];
+          drawMesh(pedMesh, pedM, pedColor, [0.05,0.06,0.1], entry.alpha);
+        }
+        drawOrbs(matrix, orbAnimTime, level.index, entry.alpha);
+      }
+      gl.depthMask(true);
+
+      const activeLevelY = currentSupport?.level?.y || 0;
+      const tiltM = boardTransform(activeLevelY);
       gl.depthMask(false);
       gl.disable(gl.DEPTH_TEST);
-      drawMarbleEffects(boardM);
+      drawMarbleEffects(tiltM);
       gl.depthMask(true);
       gl.enable(gl.DEPTH_TEST);
-      let marbleM = boardM;
-      marbleM = mat4Translate(marbleM, [marble.pos.x, marble.y, marble.pos.z]);
+      let marbleM = tiltM;
+      marbleM = mat4Translate(marbleM, [marble.pos.x, marble.y - activeLevelY, marble.pos.z]);
       drawMesh(meshes.marble, marbleM, [0.7,0.7,0.7], [0.1,0.1,0.1]);
 
       requestAnimationFrame(frame);
@@ -1124,8 +1262,10 @@
       window.addEventListener('keyup', (e) => keys.delete(e.code));
     }
 
-    marble.y = pedestalHeightAt(marble.pos.x, marble.pos.z) + marble.r;
-    spawnOrbs();
+    marble.y = levelHeightAt(levels[0], marble.pos.x, marble.pos.z) + marble.r;
+    refreshSupport();
+    spawnOrbsForLevel(0);
+    spawnOrbsForLevel(1);
     pushHistory();
     setupInput();
     requestAnimationFrame(frame);
