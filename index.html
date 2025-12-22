@@ -658,6 +658,7 @@
     const keys = new Set();
     const history = [];
     const maxHistoryFrames = 900; // ~15s at 60fps
+    let orbAnimTime = 0;
 
     function captureState() {
       return {
@@ -673,7 +674,8 @@
         },
         orbs: orbs.map(o => ({ collected: o.collected, dissolve: o.dissolve })),
         stars: stars.map(s => ({ x: s.x, y: s.y, vx: s.vx, vy: s.vy, size: s.size, alpha: s.alpha })),
-        centralCollapse: { started: centralCollapse.started, progress: centralCollapse.progress }
+        centralCollapse: { started: centralCollapse.started, progress: centralCollapse.progress },
+        orbAnimTime
       };
     }
 
@@ -688,6 +690,7 @@
       plane.tilt.y = state.plane.tilt.y;
       plane.targetTilt.x = state.plane.target.x;
       plane.targetTilt.y = state.plane.target.y;
+      orbAnimTime = state.orbAnimTime ?? orbAnimTime;
       state.orbs.forEach((o,i) => {
         if (orbs[i]) {
           orbs[i].collected = o.collected;
@@ -1027,7 +1030,7 @@
       drawMesh(meshes.marble, reflectionM, [0.65,0.7,0.8], [0.05,0.05,0.08], 0.22);
     }
 
-    function drawOrbs(boardM, timeSec) {
+    function drawOrbs(boardM, orbTime) {
       for (const orb of orbs) {
         const dissolve = orb.collected ? orb.dissolve : 0;
         if (dissolve >= 1) continue;
@@ -1035,7 +1038,7 @@
         gl.depthMask(false);
         gl.disable(gl.DEPTH_TEST);
         let haloM = boardM;
-        const haloScale = 1.8 + 0.08 * Math.sin(timeSec * 4 + orb.seed);
+        const haloScale = 1.8 + 0.08 * Math.sin(orbTime * 4 + orb.seed);
         haloM = mat4Translate(haloM, [orb.pos.x, orb.pos.y, orb.pos.z]);
         haloM = mat4Scale(haloM, [haloScale * (1 - dissolve*0.6), haloScale * (1 - dissolve*0.6), haloScale * (1 - dissolve*0.6)]);
         drawMesh(meshes.marble, haloM, [1.0,0.85,0.3], [0.22,0.18,0.1], 0.35 * (1 - dissolve));
@@ -1044,9 +1047,9 @@
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
         for (let i=0;i<orb.sats.length;i++){
           const sat = orb.sats[i];
-          const angle = timeSec * sat.speed + sat.phase;
+          const angle = orbTime * sat.speed + sat.phase;
           const dir = rotateAroundAxis(sat.base, sat.axis, angle);
-          const sy = dir.y * 0.3 + 2 * Math.sin(timeSec * 3 + i);
+          const sy = dir.y * 0.3 + 2 * Math.sin(orbTime * 3 + i);
           let sM = boardM;
           sM = mat4Translate(sM, [orb.pos.x + dir.x, orb.pos.y + sy, orb.pos.z + dir.z]);
           const sScale = 0.35 * (1 - dissolve);
@@ -1061,7 +1064,8 @@
 
     function frame(time) {
       const now = time * 0.001;
-      const dt = Math.min(0.033, now - (frame.last || now));
+      const delta = now - (frame.last || now);
+      const dt = Math.min(0.033, delta);
       frame.last = now;
 
       const rewinding = keys.has('Space');
@@ -1071,6 +1075,7 @@
         updateInput(dt);
         updatePhysics(dt);
         updateStars(dt);
+        orbAnimTime += delta;
         pushHistory();
       }
       drawStars();
@@ -1101,7 +1106,7 @@
         const pedColor = (i === centralPedestalIndex && height < 0) ? [0.05,0.18,0.5] : [0.1,0.35,0.8];
         drawMesh(pedMesh, pedM, pedColor, [0.05,0.06,0.1]);
       }
-      drawOrbs(boardM, now);
+      drawOrbs(boardM, orbAnimTime);
       gl.depthMask(false);
       gl.disable(gl.DEPTH_TEST);
       drawMarbleEffects(boardM);
