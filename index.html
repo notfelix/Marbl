@@ -177,6 +177,13 @@
       const len = Math.hypot(v.x, v.y, v.z || 0) || 1;
       return { x: v.x / len, y: v.y / len, z: (v.z || 0) / len };
     }
+    function clamp01(v) {
+      return Math.max(0, Math.min(1, v));
+    }
+    function smoothstep01(t) {
+      const x = clamp01(t);
+      return x * x * (3 - 2 * x);
+    }
     function mat4Identity() {
       const out = new Float32Array(16);
       out[0]=1; out[5]=1; out[10]=1; out[15]=1;
@@ -735,6 +742,7 @@
       strength: 480
     };
     const orbConfig = { r: 12, count: 4, minCenterDistance: 220, touchRadius: 22, satelliteCount: 1 };
+    const orbFollowTransition = 0.75;
     const followingOrbLift = orbConfig.r * 0.5;
     const orbs = [];
     const keys = new Set();
@@ -770,6 +778,8 @@
           collected: o.collected,
           dissolve: o.dissolve,
           following: !!o.following,
+          followProgress: o.followProgress ?? 1,
+          followStart: o.followStart ? { x: o.followStart.x, y: o.followStart.y, z: o.followStart.z } : null,
           vel: { x: o.vel?.x || 0, y: o.vel?.y || 0, z: o.vel?.z || 0 },
           orbitPhase: o.orbitPhase,
           orbitRadius: o.orbitRadius,
@@ -806,6 +816,16 @@
           orbs[i].level = o.level ?? orbs[i].level;
           orbs[i].renderLevel = o.renderLevel ?? orbs[i].renderLevel ?? orbs[i].level;
           orbs[i].following = !!o.following;
+          orbs[i].followProgress = o.followProgress ?? orbs[i].followProgress ?? 1;
+          if (o.followStart) {
+            orbs[i].followStart = {
+              x: o.followStart.x ?? orbs[i].pos.x,
+              y: o.followStart.y ?? orbs[i].pos.y,
+              z: o.followStart.z ?? orbs[i].pos.z
+            };
+          } else if (!orbs[i].followStart && o.collected) {
+            orbs[i].followStart = { x: orbs[i].pos.x, y: orbs[i].pos.y, z: orbs[i].pos.z };
+          }
           const vx = o.vel?.x ?? orbs[i].vel?.x ?? 0;
           const vy = o.vel?.y ?? orbs[i].vel?.y ?? 0;
           const vz = o.vel?.z ?? orbs[i].vel?.z ?? 0;
@@ -894,6 +914,8 @@
           orb.collected = true;
           orb.dissolve = 0;
           orb.following = true;
+          orb.followProgress = 0;
+          orb.followStart = { x: orb.pos.x, y: orb.pos.y, z: orb.pos.z };
           const activeLevel = getActiveLevel();
           orb.renderLevel = activeLevel?.index ?? orb.level;
           const angleToMarble = Math.atan2(orb.pos.z - marble.pos.z, orb.pos.x - marble.pos.x);
@@ -947,6 +969,10 @@
           orb.pos.y = worldY - renderLevelY;
         }
         orb.renderLevel = renderLevelIndex;
+        const rawProgress = orb.followProgress ?? 1;
+        const nextProgress = clamp01(rawProgress + dt / orbFollowTransition);
+        orb.followProgress = nextProgress;
+        const followEase = smoothstep01(nextProgress);
         if (!orb.vel) orb.vel = { x: 0, y: 0, z: 0 };
         const radius = orb.orbitRadius || 40;
         const speed = orb.orbitSpeed || 1.2;
@@ -957,9 +983,13 @@
         const targetX = marble.pos.x + Math.cos(angle) * radius;
         const targetZ = marble.pos.z + Math.sin(angle) * radius;
         const targetY = (marble.y - renderLevelY) + height + bob;
-        const dx = targetX - orb.pos.x;
-        const dy = targetY - orb.pos.y;
-        const dz = targetZ - orb.pos.z;
+        const anchor = orb.followStart || orb.pos;
+        const blendedTargetX = anchor.x + (targetX - anchor.x) * followEase;
+        const blendedTargetY = anchor.y + (targetY - anchor.y) * followEase;
+        const blendedTargetZ = anchor.z + (targetZ - anchor.z) * followEase;
+        const dx = blendedTargetX - orb.pos.x;
+        const dy = blendedTargetY - orb.pos.y;
+        const dz = blendedTargetZ - orb.pos.z;
         const dist = Math.hypot(dx, dy, dz) || 1;
         const pull = 2000;
         const accel = pull * Math.min(1, dist / 220);
@@ -1238,6 +1268,8 @@
             pos: { x: p.x, y: yLocal, z: p.z },
             collected: false,
             following: false,
+            followProgress: 1,
+            followStart: null,
             vel: { x: 0, y: 0, z: 0 },
             dissolve: 0,
             seed,
@@ -1550,6 +1582,8 @@
       const includeFollowing = opts.includeFollowing ?? true;
       const followingOnly = opts.followingOnly ?? false;
       const liftOffset = opts.liftOffset;
+      const transitionBoards = opts.transitionBoards;
+      const hasTransitionBoards = transitionBoards && transitionBoards.flat && transitionBoards.tilted && transitionBoards.invFlat;
       for (const orb of orbs) {
         const isFollowing = !!orb.following;
         if (followingOnly && !isFollowing) continue;
@@ -1558,6 +1592,8 @@
         if (renderLevelIndex !== levelIndex) continue;
         const dissolve = orb.collected ? orb.dissolve : 0;
         if (dissolve >= 1) continue;
+        const followProgress = isFollowing ? clamp01(orb.followProgress ?? 1) : 1;
+        const followEase = smoothstep01(followProgress);
         gl.depthMask(false);
         gl.enable(gl.DEPTH_TEST);
         gl.depthFunc(gl.LEQUAL);
@@ -1567,9 +1603,25 @@
         for (let i=0;i<orb.sats.length;i++){
           const sat = orb.sats[i];
           const offset = satelliteOffset(sat, orbTime, i);
-          const extraY = liftOffset ? liftOffset(orb, renderLevelIndex) : 0;
-          let sM = boardM;
-          sM = mat4Translate(sM, [orb.pos.x + offset.x, orb.pos.y + offset.y + extraY, orb.pos.z + offset.z]);
+          const extraY = liftOffset ? liftOffset(orb, renderLevelIndex, followEase) : 0;
+          const basePos = [orb.pos.x + offset.x, orb.pos.y + offset.y, orb.pos.z + offset.z, 1];
+          let sM;
+          if (isFollowing && hasTransitionBoards && followEase < 1) {
+            const tiltedPos = mat4TransformVec4(transitionBoards.tilted, basePos);
+            const flatPos = mat4TransformVec4(transitionBoards.flat, [basePos[0], basePos[1] + extraY, basePos[2], basePos[3]]);
+            const blended = [
+              tiltedPos[0] + (flatPos[0] - tiltedPos[0]) * followEase,
+              tiltedPos[1] + (flatPos[1] - tiltedPos[1]) * followEase,
+              tiltedPos[2] + (flatPos[2] - tiltedPos[2]) * followEase,
+              1
+            ];
+            const local = mat4TransformVec4(transitionBoards.invFlat, blended);
+            sM = transitionBoards.flat;
+            sM = mat4Translate(sM, [local[0], local[1], local[2]]);
+          } else {
+            sM = boardM;
+            sM = mat4Translate(sM, [basePos[0], basePos[1] + extraY, basePos[2]]);
+          }
           const sScale = 0.35 * (1 - dissolve);
           sM = mat4Scale(sM, [sScale, sScale, sScale]);
           drawMesh(meshes.marble, sM, [1.3,1.05,0.6], [0.25,0.2,0.1], alpha * 0.65 * (1 - dissolve));
@@ -1699,14 +1751,15 @@
         const lvl = levels[idx] || levels[0];
         const flatBoard = boardTransform(lvl?.y || 0, 0);
         const tiltedBoard = boardTransform(lvl?.y || 0);
-        const liftOffset = (orb) => {
+        const flatInv = mat4Invert(flatBoard);
+        const liftOffset = (orb, _renderLevelIndex, followEase=1) => {
           const pos = [orb.pos.x, orb.pos.y, orb.pos.z, 1];
           const tilted = mat4TransformVec4(tiltedBoard, pos);
           const flat = mat4TransformVec4(flatBoard, pos);
           const tiltLift = tilted[1] - flat[1];
-          return tiltLift + followingOrbLift;
+          return tiltLift + followingOrbLift * followEase;
         };
-        drawOrbs(flatBoard, orbAnimTime, idx, 1, { followingOnly: true, liftOffset });
+        drawOrbs(flatBoard, orbAnimTime, idx, 1, { followingOnly: true, liftOffset, transitionBoards: { flat: flatBoard, tilted: tiltedBoard, invFlat: flatInv } });
       }
 
       if (!paused) rafId = requestAnimationFrame(frame);
