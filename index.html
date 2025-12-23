@@ -681,6 +681,7 @@
     ];
     const levelDrop = plane.w;
     const collapseConfig = { speed: 0.5 };
+    const approachFadeDepth = levelDrop * 0.65;
     const centralHoleRadius = pedestalFootprint * 1.05;
     const centralHoleSoftness = pedestal.ramp * 0.35;
     const levels = [
@@ -1392,9 +1393,10 @@
         if (dissolve >= 1) continue;
         // Halo (outer transparent sphere)
         gl.depthMask(false);
-        gl.disable(gl.DEPTH_TEST);
+        gl.enable(gl.DEPTH_TEST);
+        gl.depthFunc(gl.LEQUAL);
         let haloM = boardM;
-        const haloScale = 1.8 + 0.08 * Math.sin(orbTime * 4 + orb.seed);
+        const haloScale = (1.8 + 0.08 * Math.sin(orbTime * 4 + orb.seed)) * 0.25;
         haloM = mat4Translate(haloM, [orb.pos.x, orb.pos.y, orb.pos.z]);
         haloM = mat4Scale(haloM, [haloScale * (1 - dissolve*0.6), haloScale * (1 - dissolve*0.6), haloScale * (1 - dissolve*0.6)]);
         drawMesh(meshes.marble, haloM, [1.0,0.85,0.3], [0.22,0.18,0.1], alpha * 0.35 * (1 - dissolve));
@@ -1414,6 +1416,7 @@
         }
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         gl.depthMask(true);
+        gl.depthFunc(gl.LESS);
         gl.enable(gl.DEPTH_TEST);
       }
     }
@@ -1449,26 +1452,37 @@
         if (!level) return false;
         if (level.index === 0) return true;
         const aboveCollapse = collapseStateFor(level.index - 1);
-        return (aboveCollapse?.started ?? false) || marble.y <= level.y;
+        return (aboveCollapse?.started ?? false) || marble.y <= level.y + approachFadeDepth;
       }
 
       const boardEntries = [];
       for (const level of levels) {
         if (!isLevelUnlocked(level)) continue;
         const collapseState = collapseStateFor(level.index);
+        const heightAbove = Math.max(0, marble.y - level.y - marble.r * 2);
+        const proximityFade = heightAbove <= 0
+          ? 1
+          : Math.max(0, Math.min(1, 1 - (heightAbove / approachFadeDepth)));
+        const aboveState = collapseStateFor(level.index - 1);
+        const aboveStarted = !!aboveState?.started;
+        const approachFade = aboveStarted ? 1 : proximityFade;
         const fade = collapseState?.started
           ? Math.max(0, Math.min(1, 1 + (marble.y - level.y) / fadeDepth))
-          : 1;
+          : approachFade;
         if (fade <= 0.001) continue;
         const levelHoles = holesForLevel(level);
         const mask = level.hasHole && levelHoles.length ? { holes: levelHoles } : null;
         boardEntries.push({ level, matrix: boardTransform(level.y), mask, alpha: fade });
       }
 
+      // Draw from lowest to highest so fading boards overlay what's below without popping
+      boardEntries.sort((a, b) => a.level.y - b.level.y);
+
       for (const entry of boardEntries) {
         const { level, matrix, mask } = entry;
         const palette = boardColors[level.index] || boardColors[0];
-        gl.depthMask(entry.alpha >= 0.999);
+        const allowDepthWrite = entry.alpha > 0.001;
+        gl.depthMask(allowDepthWrite);
         drawMesh(meshes.floor, matrix, palette.floor, [0.04,0.06,0.1], entry.alpha, level.hasHole ? mask : null);
         const wallColor = palette.wall;
         for(const w of meshes.walls) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
@@ -1485,7 +1499,7 @@
           const pedColor = pedCollapse > 0 ? palette.pedestalHole : palette.pedestal;
           if (pedCollapse > 0) gl.depthMask(false); // let the hole reveal the level below while fading
           drawMesh(pedMesh, pedM, pedColor, [0.05,0.06,0.1], pedAlpha);
-          if (pedCollapse > 0) gl.depthMask(entry.alpha >= 0.999);
+          if (pedCollapse > 0) gl.depthMask(allowDepthWrite);
         }
         drawOrbs(matrix, orbAnimTime, level.index, entry.alpha);
       }
