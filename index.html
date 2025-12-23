@@ -735,6 +735,7 @@
       strength: 480
     };
     const orbConfig = { r: 12, count: 4, minCenterDistance: 220, touchRadius: 22, satelliteCount: 1 };
+    const followingOrbLift = orbConfig.r * 0.5;
     const orbs = [];
     const keys = new Set();
     const history = [];
@@ -1517,6 +1518,7 @@
     function drawOrbs(boardM, orbTime, levelIndex=0, alpha=1, opts={}) {
       const includeFollowing = opts.includeFollowing ?? true;
       const followingOnly = opts.followingOnly ?? false;
+      const liftOffset = opts.liftOffset;
       for (const orb of orbs) {
         const isFollowing = !!orb.following;
         if (followingOnly && !isFollowing) continue;
@@ -1534,8 +1536,9 @@
         for (let i=0;i<orb.sats.length;i++){
           const sat = orb.sats[i];
           const offset = satelliteOffset(sat, orbTime, i);
+          const extraY = liftOffset ? liftOffset(orb, renderLevelIndex) : 0;
           let sM = boardM;
-          sM = mat4Translate(sM, [orb.pos.x + offset.x, orb.pos.y + offset.y, orb.pos.z + offset.z]);
+          sM = mat4Translate(sM, [orb.pos.x + offset.x, orb.pos.y + offset.y + extraY, orb.pos.z + offset.z]);
           const sScale = 0.35 * (1 - dissolve);
           sM = mat4Scale(sM, [sScale, sScale, sScale]);
           drawMesh(meshes.marble, sM, [1.3,1.05,0.6], [0.25,0.2,0.1], alpha * 0.65 * (1 - dissolve));
@@ -1641,8 +1644,16 @@
       }
       for (const idx of followingLevels) {
         const lvl = levels[idx] || levels[0];
-        const followMatrix = boardTransform(lvl?.y || 0, marbleTiltScale);
-        drawOrbs(followMatrix, orbAnimTime, idx, 1, { followingOnly: true });
+        const flatBoard = boardTransform(lvl?.y || 0, 0);
+        const tiltedBoard = boardTransform(lvl?.y || 0);
+        const liftOffset = (orb) => {
+          const pos = [orb.pos.x, orb.pos.y, orb.pos.z, 1];
+          const tilted = mat4TransformVec4(tiltedBoard, pos);
+          const flat = mat4TransformVec4(flatBoard, pos);
+          const tiltLift = tilted[1] - flat[1];
+          return tiltLift + followingOrbLift;
+        };
+        drawOrbs(flatBoard, orbAnimTime, idx, 1, { followingOnly: true, liftOffset });
       }
       gl.depthMask(true);
 
