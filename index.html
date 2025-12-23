@@ -512,25 +512,33 @@
     uniform vec3 uColor;
     uniform vec3 uAmbient;
     uniform float uAlpha;
-    uniform vec3 uHoleCenter;
-    uniform float uHoleRadius;
-    uniform float uHoleSoftness;
     const int MAX_POINTS = 4;
+    const int MAX_HOLES = 4;
     uniform int uPointCount;
     uniform vec3 uPointPos[MAX_POINTS];
     uniform float uPointIntensity[MAX_POINTS];
+    uniform int uHoleCount;
+    uniform vec3 uHoleCenters[MAX_HOLES];
+    uniform float uHoleRadii[MAX_HOLES];
+    uniform float uHoleSoftness[MAX_HOLES];
     void main(){
       vec3 n = normalize(vNormal);
       float diff = max(dot(n, normalize(uLightDir)), 0.0);
       vec3 color = uAmbient + uColor * diff;
-      if (uHoleRadius > 0.0) {
-        vec2 d = abs(vWorldPos.xz - uHoleCenter.xz);
+      float holeMask = 1.0;
+      for (int i=0; i<MAX_HOLES; ++i) {
+        if (i >= uHoleCount) break;
+        float radius = uHoleRadii[i];
+        if (radius <= 0.0) continue;
+        vec3 center = uHoleCenters[i];
+        vec2 d = abs(vWorldPos.xz - center.xz);
         float dist = max(d.x, d.y);
-        float feather = max(uHoleSoftness, 0.0001);
-        float mask = smoothstep(uHoleRadius - feather, uHoleRadius, dist);
-        if (dist < uHoleRadius) discard;
-        color *= mask;
+        float feather = max(uHoleSoftness[i], 0.0001);
+        float mask = smoothstep(radius - feather, radius, dist);
+        if (dist < radius) discard;
+        holeMask = min(holeMask, mask);
       }
+      color *= holeMask;
       // Point lights from orbs
       vec3 warm = vec3(1.1, 0.95, 0.5);
       for (int i=0; i<MAX_POINTS; ++i) {
@@ -583,10 +591,15 @@
       pointCount: gl.getUniformLocation(program, 'uPointCount'),
       pointPos: gl.getUniformLocation(program, 'uPointPos'),
       pointIntensity: gl.getUniformLocation(program, 'uPointIntensity'),
-      holeCenter: gl.getUniformLocation(program, 'uHoleCenter'),
-      holeRadius: gl.getUniformLocation(program, 'uHoleRadius'),
-      holeSoftness: gl.getUniformLocation(program, 'uHoleSoftness')
+      holeCount: gl.getUniformLocation(program, 'uHoleCount'),
+      holeCenters: gl.getUniformLocation(program, 'uHoleCenters[0]'),
+      holeRadii: gl.getUniformLocation(program, 'uHoleRadii[0]'),
+      holeSoftness: gl.getUniformLocation(program, 'uHoleSoftness[0]')
     };
+    const MAX_HOLES = 4;
+    const holeCentersArr = new Float32Array(MAX_HOLES * 3);
+    const holeRadiiArr = new Float32Array(MAX_HOLES);
+    const holeSoftnessArr = new Float32Array(MAX_HOLES);
 
     function createMesh(geo){
       const vao=gl.createVertexArray();
@@ -659,25 +672,21 @@
       return arr;
     })();
     const centralPedestalIndex = pedestalReferencePositions.findIndex(p => Math.abs(p.x) < 1e-3 && Math.abs(p.z) < 1e-3);
-    const centralPedestalPos = centralPedestalIndex >= 0 ? pedestalReferencePositions[centralPedestalIndex] : { x: 0, z: 0 };
     const topLeftPedestalIndex = pedestalReferencePositions.findIndex(p => p.x < 0 && p.z < 0);
     const bottomRightPedestalIndex = pedestalReferencePositions.findIndex(p => p.x > 0 && p.z > 0);
     const pedestalLayouts = [
       [centralPedestalIndex].filter(i => i >= 0), // Level 0: center only
-      [topLeftPedestalIndex, bottomRightPedestalIndex].filter(i => i >= 0) // Level 1: corners
+      [topLeftPedestalIndex, bottomRightPedestalIndex].filter(i => i >= 0), // Level 1: corners
+      [topLeftPedestalIndex, centralPedestalIndex, bottomRightPedestalIndex].filter(i => i >= 0) // Level 2: TL, center, BR
     ];
     const levelDrop = plane.w;
-    const centralCollapse = {
-      started: false,
-      progress: 0,
-      speed: 0.5,
-      holeDepth: pedestal.height * 0.25
-    };
+    const collapseConfig = { speed: 0.5 };
     const centralHoleRadius = pedestalFootprint * 1.05;
     const centralHoleSoftness = pedestal.ramp * 0.35;
     const levels = [
-      { y: 0, applyCollapse: true, hasHole: true },
-      { y: -levelDrop, applyCollapse: false, hasHole: false }
+      { y: 0, hasHole: true },
+      { y: -levelDrop, hasHole: true },
+      { y: -levelDrop * 2, hasHole: false }
     ];
     levels.forEach((lvl, i) => {
       lvl.index = i;
@@ -685,20 +694,30 @@
       lvl.pedestalIndices = layout;
       lvl.pedestals = layout.map(idx => pedestalReferencePositions[idx]).filter(Boolean);
     });
-    const boardColors = {
-      top: {
+    const pedestalCollapses = [
+      { levelIndex: 0, pedestals: pedestalLayouts[0], started: false, progress: 0 },
+      { levelIndex: 1, pedestals: pedestalLayouts[1], started: false, progress: 0 }
+    ];
+    const boardColors = [
+      {
         floor: [0.07, 0.28, 0.7],
         wall: [0.08, 0.22, 0.6],
         pedestal: [0.1, 0.35, 0.8],
         pedestalHole: [0.05, 0.18, 0.5]
       },
-      bottom: {
+      {
         floor: [0.78, 0.32, 0.34],
         wall: [0.78, 0.32, 0.34],
         pedestal: [0.78, 0.32, 0.34],
         pedestalHole: [0.78, 0.32, 0.34]
+      },
+      {
+        floor: [0.18, 0.58, 0.32],
+        wall: [0.16, 0.48, 0.26],
+        pedestal: [0.22, 0.68, 0.36],
+        pedestalHole: [0.12, 0.42, 0.24]
       }
-    };
+    ];
     const mouseAttractor = {
       active: false,
       target: { x: 0, z: 0 },
@@ -733,7 +752,7 @@
         },
         orbs: orbs.map(o => ({ level: o.level, collected: o.collected, dissolve: o.dissolve })),
         stars: stars.map(s => ({ x: s.x, y: s.y, vx: s.vx, vy: s.vy, size: s.size, alpha: s.alpha })),
-        centralCollapse: { started: centralCollapse.started, progress: centralCollapse.progress },
+        collapses: pedestalCollapses.map(c => ({ started: c.started, progress: c.progress })),
         orbAnimTime
       };
     }
@@ -776,9 +795,13 @@
           dst.alpha = src.alpha;
         }
       }
-      if (state.centralCollapse) {
-        centralCollapse.started = state.centralCollapse.started;
-        centralCollapse.progress = state.centralCollapse.progress;
+      if (Array.isArray(state.collapses)) {
+        state.collapses.forEach((c, i) => {
+          if (pedestalCollapses[i]) {
+            pedestalCollapses[i].started = !!c.started;
+            pedestalCollapses[i].progress = c.progress ?? pedestalCollapses[i].progress;
+          }
+        });
       }
     }
 
@@ -831,17 +854,21 @@
       console.log(`Debug: skipped orb batch ${debugSkippedOrbBatches}`);
     }
 
-    function centralCollapseEase() {
-      const t = Math.min(1, Math.max(0, centralCollapse.progress));
-      return t * t * (3 - 2 * t);
+    function collapseEase(t) {
+      const clamped = Math.min(1, Math.max(0, t));
+      return clamped * clamped * (3 - 2 * clamped);
     }
 
-    function currentCentralPedestalHeight() {
-      const eased = centralCollapseEase();
-      return pedestal.height * (1 - eased);
+    function collapseStateFor(levelIndex=-1, pedestalIdx=null) {
+      return pedestalCollapses.find(c => c.levelIndex === levelIndex && (pedestalIdx === null || c.pedestals.includes(pedestalIdx)));
     }
 
-    function centralPedestalAlpha(progress) {
+    function collapseProgressFor(levelIndex=-1, pedestalIdx=null) {
+      const state = collapseStateFor(levelIndex, pedestalIdx);
+      return state && state.started ? collapseEase(state.progress) : 0;
+    }
+
+    function pedestalCollapseAlpha(progress) {
       const fadeStart = 0.18; // keep visible while it starts folding, then fade out
       if (progress <= fadeStart) return 1;
       const t = (progress - fadeStart) / (1 - fadeStart);
@@ -859,10 +886,10 @@
       return list;
     }
 
-    function pedestalHeightForIndex(idx, applyCollapse=true) {
-      if (applyCollapse && idx === centralPedestalIndex && centralPedestalIndex !== -1) {
-        return currentCentralPedestalHeight();
-      }
+    function pedestalHeightForIndex(idx, level=null) {
+      const levelIndex = level?.index ?? 0;
+      const collapseProgress = collapseProgressFor(levelIndex, idx);
+      if (collapseProgress > 0) return pedestal.height * (1 - collapseProgress);
       return pedestal.height;
     }
 
@@ -879,11 +906,10 @@
       return height * ratio;
     }
     function pedestalHeightAt(x, z, level=null) {
-      const applyCollapse = level?.applyCollapse ?? true;
       const pedestals = pedestalsForLevel(level);
       let maxH = -Infinity;
       for (const { pos, idx } of pedestals) {
-        const h = pedestalHeightAtLocal(x - pos.x, z - pos.z, pedestalHeightForIndex(idx, applyCollapse));
+        const h = pedestalHeightAtLocal(x - pos.x, z - pos.z, pedestalHeightForIndex(idx, level));
         if (h > maxH) maxH = h;
       }
       return maxH === -Infinity ? 0 : maxH;
@@ -896,23 +922,41 @@
       return normalize3({ x: -hx, y: eps * 2, z: -hz });
     }
 
-    function currentHoleRadius() {
-      return centralHoleRadius * centralCollapseEase();
+    function holesForLevel(level=null) {
+      const levelIndex = level?.index ?? -1;
+      const state = collapseStateFor(levelIndex);
+      if (!state || !state.started) return [];
+      const progress = collapseEase(state.progress);
+      if (progress <= 0) return [];
+      return state.pedestals
+        .map(idx => {
+          const center = pedestalReferencePositions[idx];
+          if (!center) return null;
+          return {
+            center,
+            radius: centralHoleRadius * progress,
+            softness: centralHoleSoftness
+          };
+        })
+        .filter(Boolean);
     }
 
-    function isPointInCentralHole(x, z) {
-      if (!centralCollapse.started) return false;
-      const radius = currentHoleRadius();
-      const openRadius = radius - centralHoleSoftness * 0.35;
-      if (openRadius <= 0) return false;
-      const dx = Math.abs(x - centralPedestalPos.x);
-      const dz = Math.abs(z - centralPedestalPos.z);
-      const dist = Math.max(dx, dz);
-      return dist < openRadius;
+    function isPointInHole(level, x, z) {
+      const holes = holesForLevel(level);
+      if (!holes.length) return false;
+      for (const hole of holes) {
+        const openRadius = hole.radius - (hole.softness ?? 0) * 0.35;
+        if (openRadius <= 0) continue;
+        const dx = Math.abs(x - hole.center.x);
+        const dz = Math.abs(z - hole.center.z);
+        const dist = Math.max(dx, dz);
+        if (dist < openRadius) return true;
+      }
+      return false;
     }
 
     function levelHeightAt(level, x, z) {
-      if (level.hasHole && isPointInCentralHole(x, z)) return -Infinity;
+      if (level.hasHole && isPointInHole(level, x, z)) return -Infinity;
       const h = pedestalHeightAt(x, z, level);
       return h + level.y;
     }
@@ -969,13 +1013,15 @@
       return !Number.isFinite(currentSupport?.surfaceHeight) || support < 0.01;
     }
 
-    function updateCentralCollapse(dt) {
-      const topOrbs = orbs.filter(o => (o.level ?? 0) === 0);
-      if (!centralCollapse.started && topOrbs.length >= orbConfig.count && topOrbs.every(o => o.collected)) {
-        centralCollapse.started = true;
-      }
-      if (centralCollapse.started) {
-        centralCollapse.progress = Math.min(1, centralCollapse.progress + dt * centralCollapse.speed);
+    function updateCollapses(dt) {
+      for (const collapse of pedestalCollapses) {
+        const levelOrbs = orbs.filter(o => (o.level ?? 0) === collapse.levelIndex);
+        if (!collapse.started && levelOrbs.length >= orbConfig.count && levelOrbs.every(o => o.collected)) {
+          collapse.started = true;
+        }
+        if (collapse.started) {
+          collapse.progress = Math.min(1, collapse.progress + dt * collapseConfig.speed);
+        }
       }
     }
 
@@ -1103,8 +1149,11 @@
 
     function updateCamera(dt) {
       const follow = camera.followRatio;
-      const desiredPosY = camera.baseHeight + marble.y * follow;
-      const desiredTargetY = marble.y * follow * 0.6;
+      const level = getActiveLevel();
+      const levelY = level?.y || 0;
+      const marbleLocalY = marble.y - levelY;
+      const desiredPosY = levelY + camera.baseHeight + marbleLocalY * follow;
+      const desiredTargetY = levelY + marbleLocalY * follow * 0.6;
       const smooth = camera.smooth;
       camera.pos.y += (desiredPosY - camera.pos.y) * dt * smooth;
       camera.target.y += (desiredTargetY - camera.target.y) * dt * smooth;
@@ -1225,7 +1274,7 @@
 
       checkOrbCollisions();
       updateOrbs(dt);
-      updateCentralCollapse(dt);
+      updateCollapses(dt);
       refreshSupport();
     }
 
@@ -1254,16 +1303,32 @@
       gl.uniform3fv(uniforms.color, new Float32Array(color));
       gl.uniform3fv(uniforms.ambient, new Float32Array(ambient));
       gl.uniform1f(uniforms.alpha, alpha);
+      holeCentersArr.fill(0);
+      holeRadiiArr.fill(0);
+      holeSoftnessArr.fill(0);
       if (holeMask) {
-        const progress = Math.max(0, Math.min(1, holeMask.progress ?? 1));
-        const radius = (holeMask.radius || 0) * progress;
-        const center = holeMask.center || { x: 0, y: 0, z: 0 };
-        gl.uniform3fv(uniforms.holeCenter, new Float32Array([center.x, center.y, center.z]));
-        gl.uniform1f(uniforms.holeRadius, radius);
-        gl.uniform1f(uniforms.holeSoftness, holeMask.softness ?? 0);
+        const holes = Array.isArray(holeMask.holes) ? holeMask.holes : [holeMask];
+        const count = Math.min(MAX_HOLES, holes.length);
+        for (let i = 0; i < count; i++) {
+          const h = holes[i] || {};
+          const progress = Math.max(0, Math.min(1, h.progress ?? 1));
+          const radius = (h.radius || 0) * progress;
+          const c = h.center || { x: 0, y: 0, z: 0 };
+          holeCentersArr[i * 3 + 0] = c.x || 0;
+          holeCentersArr[i * 3 + 1] = c.y || 0;
+          holeCentersArr[i * 3 + 2] = c.z || 0;
+          holeRadiiArr[i] = radius;
+          holeSoftnessArr[i] = h.softness ?? 0;
+        }
+        gl.uniform1i(uniforms.holeCount, count);
+        gl.uniform3fv(uniforms.holeCenters, holeCentersArr);
+        gl.uniform1fv(uniforms.holeRadii, holeRadiiArr);
+        gl.uniform1fv(uniforms.holeSoftness, holeSoftnessArr);
       } else {
-        gl.uniform1f(uniforms.holeRadius, 0);
-        gl.uniform1f(uniforms.holeSoftness, 0);
+        gl.uniform1i(uniforms.holeCount, 0);
+        gl.uniform3fv(uniforms.holeCenters, holeCentersArr);
+        gl.uniform1fv(uniforms.holeRadii, holeRadiiArr);
+        gl.uniform1fv(uniforms.holeSoftness, holeSoftnessArr);
       }
       gl.drawElements(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0);
     }
@@ -1282,13 +1347,11 @@
 
     function drawMarbleEffects(boardM) {
       const supportLevel = getActiveLevel();
-      const holeMask = (supportLevel?.hasHole && centralCollapse.progress > 0)
-        ? {
-            center: { x: centralPedestalPos.x, y: 0, z: centralPedestalPos.z },
-            radius: currentHoleRadius(),
-            softness: centralHoleSoftness,
-            progress: 1
-          }
+      const holeMask = (supportLevel?.hasHole)
+        ? (() => {
+            const holes = holesForLevel(supportLevel);
+            return holes.length ? { holes } : null;
+          })()
         : null;
       const levelY = supportLevel.y || 0;
       const surfaceY = isAirborne()
@@ -1380,51 +1443,49 @@
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-      const collapseProgress = centralCollapseEase();
       const activeLevel = getActiveLevel();
-      const onLowerLevel = (activeLevel?.index ?? 0) > 0;
       const fadeDepth = levelDrop * 0.75; // fade out as we fall roughly three quarters of a level
-      const topFade = centralCollapse.started
-        ? Math.max(0, Math.min(1, 1 + marble.y / fadeDepth))
-        : 1;
-      const holeMask = {
-        center: { x: centralPedestalPos.x, y: 0, z: centralPedestalPos.z },
-        radius: centralHoleRadius,
-        softness: centralHoleSoftness,
-        progress: collapseProgress
-      };
+      function isLevelUnlocked(level) {
+        if (!level) return false;
+        if (level.index === 0) return true;
+        const aboveCollapse = collapseStateFor(level.index - 1);
+        return (aboveCollapse?.started ?? false) || marble.y <= level.y;
+      }
 
       const boardEntries = [];
-      if (centralCollapse.started) {
-        boardEntries.push({ level: levels[1], matrix: boardTransform(levels[1].y), mask: null, alpha: 1 });
-      }
-      if (topFade > 0.001) {
-        boardEntries.push({ level: levels[0], matrix: boardTransform(levels[0].y), mask: holeMask, alpha: topFade });
-      }
-      if (centralCollapse.started) {
-        if (!boardEntries.some(b => b.level.index === 1)) {
-          boardEntries.push({ level: levels[1], matrix: boardTransform(levels[1].y), mask: null, alpha: 1 });
-        }
+      for (const level of levels) {
+        if (!isLevelUnlocked(level)) continue;
+        const collapseState = collapseStateFor(level.index);
+        const fade = collapseState?.started
+          ? Math.max(0, Math.min(1, 1 + (marble.y - level.y) / fadeDepth))
+          : 1;
+        if (fade <= 0.001) continue;
+        const levelHoles = holesForLevel(level);
+        const mask = level.hasHole && levelHoles.length ? { holes: levelHoles } : null;
+        boardEntries.push({ level, matrix: boardTransform(level.y), mask, alpha: fade });
       }
 
       for (const entry of boardEntries) {
         const { level, matrix, mask } = entry;
-        const palette = level === levels[0] ? boardColors.top : boardColors.bottom;
+        const palette = boardColors[level.index] || boardColors[0];
         gl.depthMask(entry.alpha >= 0.999);
         drawMesh(meshes.floor, matrix, palette.floor, [0.04,0.06,0.1], entry.alpha, level.hasHole ? mask : null);
         const wallColor = palette.wall;
         for(const w of meshes.walls) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
         const pedestals = pedestalsForLevel(level);
         for(const { pos, idx } of pedestals){
-          const height = pedestalHeightForIndex(idx, level.applyCollapse);
-          const isCentral = level.applyCollapse && idx === centralPedestalIndex;
-          const pedMesh = (isCentral && collapseProgress > 0) ? meshes.pedestalHole : meshes.pedestal;
-          const pedAlpha = isCentral ? entry.alpha * centralPedestalAlpha(collapseProgress) : entry.alpha;
+          const height = pedestalHeightForIndex(idx, level);
+          const pedCollapse = collapseProgressFor(level.index, idx);
+          const pedMesh = pedCollapse > 0 ? meshes.pedestalHole : meshes.pedestal;
+          const pedAlpha = pedCollapse > 0 ? entry.alpha * pedestalCollapseAlpha(pedCollapse) : entry.alpha;
+          if (pedAlpha <= 0.001) continue;
           let pedM = matrix;
           pedM = mat4Translate(pedM, [pos.x, 0, pos.z]);
           pedM = mat4Scale(pedM, [1, height / pedestal.height, 1]);
-          const pedColor = (isCentral && collapseProgress > 0) ? palette.pedestalHole : palette.pedestal;
+          const pedColor = pedCollapse > 0 ? palette.pedestalHole : palette.pedestal;
+          if (pedCollapse > 0) gl.depthMask(false); // let the hole reveal the level below while fading
           drawMesh(pedMesh, pedM, pedColor, [0.05,0.06,0.1], pedAlpha);
+          if (pedCollapse > 0) gl.depthMask(entry.alpha >= 0.999);
         }
         drawOrbs(matrix, orbAnimTime, level.index, entry.alpha);
       }
@@ -1485,6 +1546,7 @@
     refreshSupport();
     spawnOrbsForLevel(0);
     spawnOrbsForLevel(1);
+    spawnOrbsForLevel(2);
     pushHistory();
     setupInput();
     requestAnimationFrame(frame);
