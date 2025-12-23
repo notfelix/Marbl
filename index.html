@@ -1483,9 +1483,14 @@
       }
     }
 
-    function drawOrbs(boardM, orbTime, levelIndex=0, alpha=1) {
+    function drawOrbs(boardM, orbTime, levelIndex=0, alpha=1, opts={}) {
+      const includeFollowing = opts.includeFollowing ?? true;
+      const followingOnly = opts.followingOnly ?? false;
       for (const orb of orbs) {
-        const renderLevelIndex = orb.following ? (orb.renderLevel ?? getActiveLevel()?.index ?? orb.level) : orb.level;
+        const isFollowing = !!orb.following;
+        if (followingOnly && !isFollowing) continue;
+        if (!followingOnly && !includeFollowing && isFollowing) continue;
+        const renderLevelIndex = isFollowing ? (orb.renderLevel ?? getActiveLevel()?.index ?? orb.level) : orb.level;
         if (renderLevelIndex !== levelIndex) continue;
         const dissolve = orb.collected ? orb.dissolve : 0;
         if (dissolve >= 1) continue;
@@ -1591,7 +1596,21 @@
           drawMesh(pedMesh, pedM, pedColor, [0.05,0.06,0.1], pedAlpha);
           if (pedCollapse > 0) gl.depthMask(allowDepthWrite);
         }
-        drawOrbs(matrix, orbAnimTime, level.index, entry.alpha);
+        drawOrbs(matrix, orbAnimTime, level.index, entry.alpha, { includeFollowing: false });
+      }
+      // Keep attached orbs visible while falling between boards by drawing them separately
+      const followingLevels = new Set();
+      for (const orb of orbs) {
+        if (!orb.following) continue;
+        if (orb.collected && orb.dissolve >= 1) continue;
+        const idx = orb.renderLevel ?? activeLevel?.index ?? orb.level;
+        if (!Number.isFinite(idx)) continue;
+        followingLevels.add(idx);
+      }
+      for (const idx of followingLevels) {
+        const lvl = levels[idx] || levels[0];
+        const followMatrix = boardTransform(lvl?.y || 0);
+        drawOrbs(followMatrix, orbAnimTime, idx, 1, { followingOnly: true });
       }
       gl.depthMask(true);
 
