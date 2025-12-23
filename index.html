@@ -1662,29 +1662,8 @@
           drawMesh(pedMesh, pedM, pedColor, [0.05,0.06,0.1], pedAlpha);
           if (pedCollapse > 0) gl.depthMask(allowDepthWrite);
         }
+        // Draw level orbs with depth so lower levels stay occluded by boards
         drawOrbs(matrix, orbAnimTime, level.index, entry.alpha, { includeFollowing: false });
-      }
-      // Keep attached orbs visible while falling between boards by drawing them separately
-      const followingLevels = new Set();
-      for (const orb of orbs) {
-        if (!orb.following) continue;
-        if (orb.collected && orb.dissolve >= 1) continue;
-        const idx = orb.renderLevel ?? activeLevel?.index ?? orb.level;
-        if (!Number.isFinite(idx)) continue;
-        followingLevels.add(idx);
-      }
-      for (const idx of followingLevels) {
-        const lvl = levels[idx] || levels[0];
-        const flatBoard = boardTransform(lvl?.y || 0, 0);
-        const tiltedBoard = boardTransform(lvl?.y || 0);
-        const liftOffset = (orb) => {
-          const pos = [orb.pos.x, orb.pos.y, orb.pos.z, 1];
-          const tilted = mat4TransformVec4(tiltedBoard, pos);
-          const flat = mat4TransformVec4(flatBoard, pos);
-          const tiltLift = tilted[1] - flat[1];
-          return tiltLift + followingOrbLift;
-        };
-        drawOrbs(flatBoard, orbAnimTime, idx, 1, { followingOnly: true, liftOffset });
       }
       gl.depthMask(true);
 
@@ -1700,6 +1679,35 @@
       let marbleM = marbleTiltM;
       marbleM = mat4Translate(marbleM, [marble.pos.x, marble.y - activeLevelY, marble.pos.z]);
       drawMesh(meshes.marble, marbleM, [0.7,0.7,0.7], [0.1,0.1,0.1]);
+
+      // Draw current-level orbs over the marble for a brighter, on-top glow
+      gl.clear(gl.DEPTH_BUFFER_BIT);
+      const activeEntry = boardEntries.find(e => e.level.index === activeLevel?.index);
+      if (activeEntry) {
+        drawOrbs(activeEntry.matrix, orbAnimTime, activeEntry.level.index, activeEntry.alpha, { includeFollowing: false });
+      }
+      const followingLevels = new Set();
+      for (const orb of orbs) {
+        if (!orb.following) continue;
+        if (orb.collected && orb.dissolve >= 1) continue;
+        const idx = orb.renderLevel ?? activeLevel?.index ?? orb.level;
+        if (!Number.isFinite(idx)) continue;
+        followingLevels.add(idx);
+      }
+      for (const idx of followingLevels) {
+        if (activeLevel && idx !== activeLevel.index) continue;
+        const lvl = levels[idx] || levels[0];
+        const flatBoard = boardTransform(lvl?.y || 0, 0);
+        const tiltedBoard = boardTransform(lvl?.y || 0);
+        const liftOffset = (orb) => {
+          const pos = [orb.pos.x, orb.pos.y, orb.pos.z, 1];
+          const tilted = mat4TransformVec4(tiltedBoard, pos);
+          const flat = mat4TransformVec4(flatBoard, pos);
+          const tiltLift = tilted[1] - flat[1];
+          return tiltLift + followingOrbLift;
+        };
+        drawOrbs(flatBoard, orbAnimTime, idx, 1, { followingOnly: true, liftOffset });
+      }
 
       if (!paused) rafId = requestAnimationFrame(frame);
     }
