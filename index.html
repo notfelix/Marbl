@@ -1483,12 +1483,18 @@
       }
     }
 
-    function drawOrbs(boardM, orbTime, levelIndex=0, alpha=1) {
+    function drawOrbs(boardM, orbTime, levelIndex=0, alpha=1, options={}) {
+      const followingAlpha = options.followingAlpha ?? alpha;
+      const skipFollowing = options.skipFollowing || false;
+      const followingOnly = options.followingOnly || false;
       for (const orb of orbs) {
         const renderLevelIndex = orb.following ? (orb.renderLevel ?? getActiveLevel()?.index ?? orb.level) : orb.level;
         if (renderLevelIndex !== levelIndex) continue;
+        if (followingOnly && !orb.following) continue;
+        if (skipFollowing && orb.following) continue;
         const dissolve = orb.collected ? orb.dissolve : 0;
         if (dissolve >= 1) continue;
+        const alphaScale = orb.following ? followingAlpha : alpha;
         gl.depthMask(false);
         gl.enable(gl.DEPTH_TEST);
         gl.depthFunc(gl.LEQUAL);
@@ -1502,7 +1508,7 @@
           sM = mat4Translate(sM, [orb.pos.x + offset.x, orb.pos.y + offset.y, orb.pos.z + offset.z]);
           const sScale = 0.35 * (1 - dissolve);
           sM = mat4Scale(sM, [sScale, sScale, sScale]);
-          drawMesh(meshes.marble, sM, [1.3,1.05,0.6], [0.25,0.2,0.1], alpha * 0.65 * (1 - dissolve));
+          drawMesh(meshes.marble, sM, [1.3,1.05,0.6], [0.25,0.2,0.1], alphaScale * 0.65 * (1 - dissolve));
         }
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         gl.depthMask(true);
@@ -1571,7 +1577,11 @@
       for (const entry of boardEntries) {
         const { level, matrix, mask } = entry;
         const palette = boardColors[level.index] || boardColors[0];
-        const allowDepthWrite = entry.alpha > 0.001;
+        const collapseState = collapseStateFor(level.index);
+        const marbleBelowLevel = marble.y + marble.r < level.y;
+        const fadingLevel = !!collapseState?.started && entry.alpha < 0.999;
+        // Don't let a fading upper level keep occluding the marble once it has fallen through
+        const allowDepthWrite = entry.alpha > 0.001 && !(fadingLevel && marbleBelowLevel);
         gl.depthMask(allowDepthWrite);
         drawMesh(meshes.floor, matrix, palette.floor, [0.04,0.06,0.1], entry.alpha, level.hasHole ? mask : null);
         const wallColor = palette.wall;
@@ -1591,9 +1601,22 @@
           drawMesh(pedMesh, pedM, pedColor, [0.05,0.06,0.1], pedAlpha);
           if (pedCollapse > 0) gl.depthMask(allowDepthWrite);
         }
-        drawOrbs(matrix, orbAnimTime, level.index, entry.alpha);
+        drawOrbs(matrix, orbAnimTime, level.index, entry.alpha, { skipFollowing: true });
       }
       gl.depthMask(true);
+
+      // Keep collected orbs visible while falling, even if the source level has faded out
+      const followingLevels = new Set();
+      for (const orb of orbs) {
+        if (!orb.following) continue;
+        const idx = orb.renderLevel ?? activeLevel?.index ?? orb.level ?? 0;
+        if (idx >= 0 && idx < levels.length) followingLevels.add(idx);
+      }
+      for (const idx of followingLevels) {
+        const levelY = levels[idx]?.y || 0;
+        const matrix = boardTransform(levelY);
+        drawOrbs(matrix, orbAnimTime, idx, 1, { followingOnly: true, followingAlpha: 1 });
+      }
 
       const activeLevelY = activeLevel?.y || 0;
       const boardTiltM = boardTransform(activeLevelY);
