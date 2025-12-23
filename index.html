@@ -745,6 +745,8 @@
     let currentSupport = null;
     let lastGroundedLevel = null;
     let lastGroundSurfaceHeight = null;
+    let paused = false;
+    let rafId = null;
 
     function captureState() {
       return {
@@ -848,6 +850,35 @@
         history.pop(); // discard current
         applyState(history[history.length - 1]);
       }
+    }
+
+    function stopLoop() {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+    }
+
+    function resumeLoop(resetClock=false) {
+      if (resetClock) frame.last = performance.now() * 0.001;
+      if (rafId === null && !paused) {
+        rafId = requestAnimationFrame(frame);
+      }
+    }
+
+    function setPaused(state) {
+      if (state === paused) return;
+      paused = state;
+      if (paused) {
+        stopLoop();
+        frame.last = null;
+      } else {
+        resumeLoop(true);
+      }
+    }
+
+    function togglePause() {
+      setPaused(!paused);
     }
 
     function checkOrbCollisions() {
@@ -1670,13 +1701,17 @@
       marbleM = mat4Translate(marbleM, [marble.pos.x, marble.y - activeLevelY, marble.pos.z]);
       drawMesh(meshes.marble, marbleM, [0.7,0.7,0.7], [0.1,0.1,0.1]);
 
-      requestAnimationFrame(frame);
+      if (!paused) rafId = requestAnimationFrame(frame);
     }
 
     function setupInput() {
       window.addEventListener('keydown', (e) => {
         if (!e.repeat && (e.code === 'Digit0' || e.code === 'Numpad0')) {
           skipNextOrbBatch();
+          return;
+        }
+        if (!e.repeat && e.code === 'Escape') {
+          togglePause();
           return;
         }
         keys.add(e.code);
@@ -1715,7 +1750,7 @@
     spawnOrbsForLevel(2);
     pushHistory();
     setupInput();
-    requestAnimationFrame(frame);
+    resumeLoop();
   </script>
 </body>
 </html>
