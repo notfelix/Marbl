@@ -876,6 +876,29 @@
       }
     }
 
+    function applyOrbFloorClamp(orb, renderLevelIndex) {
+      const level = levels[renderLevelIndex];
+      if (!level) return;
+      const ground = levelHeightAt(level, orb.pos.x, orb.pos.z);
+      if (!Number.isFinite(ground)) return; // let orbs fall through holes
+      const levelY = level.y || 0;
+      const clearance = (orbConfig.r || 12) * 0.6;
+      const floorLocal = (ground - levelY) + clearance;
+      const distAbove = orb.pos.y - floorLocal;
+      const approachZone = clearance * 3;
+      // Feather the downward speed as we approach the floor to avoid hard stops
+      if (distAbove < approachZone && orb.vel.y < 0) {
+        const t = Math.max(0, Math.min(1, 1 - distAbove / approachZone));
+        const damp = 1 - 0.5 * t;
+        orb.vel.y *= damp;
+      }
+      if (distAbove < 0) {
+        // Nudge back to the safe band and kill downward velocity
+        orb.pos.y = floorLocal;
+        if (orb.vel.y < 0) orb.vel.y = 0;
+      }
+    }
+
     function updateOrbs(dt) {
       const activeLevel = getActiveLevel() || levels[0];
       const renderLevelIndex = activeLevel?.index ?? 0;
@@ -884,6 +907,13 @@
         if (!orb.collected) continue;
         orb.following = true;
         orb.dissolve = 0;
+        const prevRenderLevel = orb.renderLevel ?? renderLevelIndex;
+        const prevLevelY = levels[prevRenderLevel]?.y || 0;
+        if (prevRenderLevel !== renderLevelIndex) {
+          // Preserve world-space height when re-parenting to a new level frame
+          const worldY = orb.pos.y + prevLevelY;
+          orb.pos.y = worldY - renderLevelY;
+        }
         orb.renderLevel = renderLevelIndex;
         if (!orb.vel) orb.vel = { x: 0, y: 0, z: 0 };
         const radius = orb.orbitRadius || 40;
@@ -911,6 +941,7 @@
         orb.pos.x += orb.vel.x * dt;
         orb.pos.y += orb.vel.y * dt;
         orb.pos.z += orb.vel.z * dt;
+        applyOrbFloorClamp(orb, renderLevelIndex);
       }
     }
 
@@ -1542,6 +1573,7 @@
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
       const activeLevel = getActiveLevel();
+      const marbleTiltScale = Math.max(0, Math.min(1, currentSupport?.support ?? 0));
       const fadeDepth = levelDrop * 0.75; // fade out as we fall roughly three quarters of a level
       function isLevelUnlocked(level) {
         if (!level) return false;
@@ -1609,14 +1641,13 @@
       }
       for (const idx of followingLevels) {
         const lvl = levels[idx] || levels[0];
-        const followMatrix = boardTransform(lvl?.y || 0);
+        const followMatrix = boardTransform(lvl?.y || 0, marbleTiltScale);
         drawOrbs(followMatrix, orbAnimTime, idx, 1, { followingOnly: true });
       }
       gl.depthMask(true);
 
       const activeLevelY = activeLevel?.y || 0;
       const boardTiltM = boardTransform(activeLevelY);
-      const marbleTiltScale = Math.max(0, Math.min(1, currentSupport?.support ?? 0));
       const marbleTiltM = marbleTiltScale >= 0.999 ? boardTiltM : boardTransform(activeLevelY, marbleTiltScale);
       gl.depthMask(false);
       gl.disable(gl.DEPTH_TEST);
