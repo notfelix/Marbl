@@ -1245,11 +1245,11 @@
       gl.drawElements(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0);
     }
 
-    function boardTransform(offsetY=0) {
+    function boardTransform(offsetY=0, tiltScale=1) {
       let m = mat4Identity();
       m = mat4Translate(m, [0, offsetY, 0]);
-      m = mat4RotateX(m, plane.tilt.y * 0.35);
-      m = mat4RotateZ(m, plane.tilt.x * 0.35);
+      m = mat4RotateX(m, plane.tilt.y * 0.35 * tiltScale);
+      m = mat4RotateZ(m, plane.tilt.x * 0.35 * tiltScale);
       return m;
     }
     function boardNormal() {
@@ -1400,13 +1400,15 @@
       gl.depthMask(true);
 
       const activeLevelY = activeLevel?.y || 0;
-      const tiltM = boardTransform(activeLevelY);
+      const boardTiltM = boardTransform(activeLevelY);
+      const marbleTiltScale = Math.max(0, Math.min(1, currentSupport?.support ?? 0));
+      const marbleTiltM = marbleTiltScale >= 0.999 ? boardTiltM : boardTransform(activeLevelY, marbleTiltScale);
       gl.depthMask(false);
       gl.disable(gl.DEPTH_TEST);
-      drawMarbleEffects(tiltM);
+      drawMarbleEffects(boardTiltM);
       gl.depthMask(true);
       gl.enable(gl.DEPTH_TEST);
-      let marbleM = tiltM;
+      let marbleM = marbleTiltM;
       marbleM = mat4Translate(marbleM, [marble.pos.x, marble.y - activeLevelY, marble.pos.z]);
       drawMesh(meshes.marble, marbleM, [0.7,0.7,0.7], [0.1,0.1,0.1]);
 
