@@ -1604,6 +1604,7 @@
       drawMarbleEffects(boardTiltM);
       gl.depthMask(true);
       gl.enable(gl.DEPTH_TEST);
+      gl.clear(gl.DEPTH_BUFFER_BIT); // let the marble render unobstructed after fading boards
       let marbleM = marbleTiltM;
       marbleM = mat4Translate(marbleM, [marble.pos.x, marble.y - activeLevelY, marble.pos.z]);
       drawMesh(meshes.marble, marbleM, [0.7,0.7,0.7], [0.1,0.1,0.1]);
