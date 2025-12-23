@@ -645,7 +645,7 @@
       count: pedestalGridCount,
       spacing: pedestalGridSpacing
     };
-    const pedestalPositions = (() => {
+    const pedestalReferencePositions = (() => {
       const arr=[];
       const offset = (pedestalGrid.count - 1) * 0.5;
       for(let i=0;i<pedestalGrid.count;i++){
@@ -658,8 +658,14 @@
       }
       return arr;
     })();
-    const centralPedestalIndex = pedestalPositions.findIndex(p => Math.abs(p.x) < 1e-3 && Math.abs(p.z) < 1e-3);
-    const centralPedestalPos = centralPedestalIndex >= 0 ? pedestalPositions[centralPedestalIndex] : { x: 0, z: 0 };
+    const centralPedestalIndex = pedestalReferencePositions.findIndex(p => Math.abs(p.x) < 1e-3 && Math.abs(p.z) < 1e-3);
+    const centralPedestalPos = centralPedestalIndex >= 0 ? pedestalReferencePositions[centralPedestalIndex] : { x: 0, z: 0 };
+    const topLeftPedestalIndex = pedestalReferencePositions.findIndex(p => p.x < 0 && p.z < 0);
+    const bottomRightPedestalIndex = pedestalReferencePositions.findIndex(p => p.x > 0 && p.z > 0);
+    const pedestalLayouts = [
+      [centralPedestalIndex].filter(i => i >= 0), // Level 0: center only
+      [topLeftPedestalIndex, bottomRightPedestalIndex].filter(i => i >= 0) // Level 1: corners
+    ];
     const levelDrop = plane.w;
     const centralCollapse = {
       started: false,
@@ -673,7 +679,12 @@
       { y: 0, applyCollapse: true, hasHole: true },
       { y: -levelDrop, applyCollapse: false, hasHole: false }
     ];
-    levels.forEach((lvl, i) => lvl.index = i);
+    levels.forEach((lvl, i) => {
+      lvl.index = i;
+      const layout = pedestalLayouts[i] || [];
+      lvl.pedestalIndices = layout;
+      lvl.pedestals = layout.map(idx => pedestalReferencePositions[idx]).filter(Boolean);
+    });
     const boardColors = {
       top: {
         floor: [0.07, 0.28, 0.7],
@@ -837,6 +848,17 @@
       return Math.max(0, 1 - t);
     }
 
+    function pedestalsForLevel(level=null) {
+      const positions = level?.pedestals ?? pedestalReferencePositions;
+      const indices = level?.pedestalIndices ?? positions.map((_, idx) => idx);
+      const count = Math.min(positions.length, indices.length);
+      const list = [];
+      for (let i=0;i<count;i++) {
+        list.push({ pos: positions[i], idx: indices[i] });
+      }
+      return list;
+    }
+
     function pedestalHeightForIndex(idx, applyCollapse=true) {
       if (applyCollapse && idx === centralPedestalIndex && centralPedestalIndex !== -1) {
         return currentCentralPedestalHeight();
@@ -856,20 +878,21 @@
       const ratio = 1 - Math.min(1, t / ramp);
       return height * ratio;
     }
-    function pedestalHeightAt(x, z, applyCollapse=true) {
+    function pedestalHeightAt(x, z, level=null) {
+      const applyCollapse = level?.applyCollapse ?? true;
+      const pedestals = pedestalsForLevel(level);
       let maxH = -Infinity;
-      for (let i=0;i<pedestalPositions.length;i++) {
-        const p = pedestalPositions[i];
-        const h = pedestalHeightAtLocal(x - p.x, z - p.z, pedestalHeightForIndex(i, applyCollapse));
+      for (const { pos, idx } of pedestals) {
+        const h = pedestalHeightAtLocal(x - pos.x, z - pos.z, pedestalHeightForIndex(idx, applyCollapse));
         if (h > maxH) maxH = h;
       }
       return maxH === -Infinity ? 0 : maxH;
     }
-    function pedestalNormalAt(x, z, applyCollapse=true) {
+    function pedestalNormalAt(x, z, level=null) {
       const eps = 2;
-      const h = pedestalHeightAt(x, z, applyCollapse);
-      const hx = pedestalHeightAt(x + eps, z, applyCollapse) - pedestalHeightAt(x - eps, z, applyCollapse);
-      const hz = pedestalHeightAt(x, z + eps, applyCollapse) - pedestalHeightAt(x, z - eps, applyCollapse);
+      const h = pedestalHeightAt(x, z, level);
+      const hx = pedestalHeightAt(x + eps, z, level) - pedestalHeightAt(x - eps, z, level);
+      const hz = pedestalHeightAt(x, z + eps, level) - pedestalHeightAt(x, z - eps, level);
       return normalize3({ x: -hx, y: eps * 2, z: -hz });
     }
 
@@ -890,7 +913,7 @@
 
     function levelHeightAt(level, x, z) {
       if (level.hasHole && isPointInCentralHole(x, z)) return -Infinity;
-      const h = pedestalHeightAt(x, z, level.applyCollapse);
+      const h = pedestalHeightAt(x, z, level);
       return h + level.y;
     }
 
@@ -1391,14 +1414,14 @@
         drawMesh(meshes.floor, matrix, palette.floor, [0.04,0.06,0.1], entry.alpha, level.hasHole ? mask : null);
         const wallColor = palette.wall;
         for(const w of meshes.walls) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
-        for(let i=0;i<pedestalPositions.length;i++){
-          const p = pedestalPositions[i];
-          const height = pedestalHeightForIndex(i, level.applyCollapse);
-          const isCentral = level.applyCollapse && i === centralPedestalIndex;
+        const pedestals = pedestalsForLevel(level);
+        for(const { pos, idx } of pedestals){
+          const height = pedestalHeightForIndex(idx, level.applyCollapse);
+          const isCentral = level.applyCollapse && idx === centralPedestalIndex;
           const pedMesh = (isCentral && collapseProgress > 0) ? meshes.pedestalHole : meshes.pedestal;
           const pedAlpha = isCentral ? entry.alpha * centralPedestalAlpha(collapseProgress) : entry.alpha;
           let pedM = matrix;
-          pedM = mat4Translate(pedM, [p.x, 0, p.z]);
+          pedM = mat4Translate(pedM, [pos.x, 0, pos.z]);
           pedM = mat4Scale(pedM, [1, height / pedestal.height, 1]);
           const pedColor = (isCentral && collapseProgress > 0) ? palette.pedestalHole : palette.pedestal;
           drawMesh(pedMesh, pedM, pedColor, [0.05,0.06,0.1], pedAlpha);
