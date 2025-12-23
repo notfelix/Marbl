@@ -1259,6 +1259,14 @@
 
     function drawMarbleEffects(boardM) {
       const supportLevel = getActiveLevel();
+      const holeMask = (supportLevel?.hasHole && centralCollapse.progress > 0)
+        ? {
+            center: { x: centralPedestalPos.x, y: 0, z: centralPedestalPos.z },
+            radius: currentHoleRadius(),
+            softness: centralHoleSoftness,
+            progress: 1
+          }
+        : null;
       const levelY = supportLevel.y || 0;
       const surfaceY = isAirborne()
         ? lastGroundSurfaceHeight
@@ -1278,7 +1286,7 @@
       shadowM = mat4Translate(shadowM, [marble.pos.x, planeY - levelY + shadowOffset, marble.pos.z]);
       shadowM = mat4Multiply(shadowM, orient);
       shadowM = mat4Scale(shadowM, [1.08, 0.08, 1.08]);
-      drawMesh(meshes.marble, shadowM, [0,0,0], [0,0,0], 0.38 * shadowStrength);
+      drawMesh(meshes.marble, shadowM, [0,0,0], [0,0,0], 0.38 * shadowStrength, holeMask);
       // Reflection (mirror across the local surface plane)
       const distanceAbove = marble.y - planeY;
       if (deltaY >= 0) { // only show reflection while above the plane
@@ -1287,7 +1295,7 @@
         reflectionM = mat4Translate(reflectionM, [marble.pos.x, reflectionY - levelY, marble.pos.z]);
         reflectionM = mat4Multiply(reflectionM, orient);
         reflectionM = mat4Scale(reflectionM, [1, -1, 1]);
-        drawMesh(meshes.marble, reflectionM, [0.65,0.7,0.8], [0.05,0.05,0.08], 0.22 * Math.max(0, shadowStrength * 0.58));
+        drawMesh(meshes.marble, reflectionM, [0.65,0.7,0.8], [0.05,0.05,0.08], 0.22 * Math.max(0, shadowStrength * 0.58), holeMask);
       }
     }
 
