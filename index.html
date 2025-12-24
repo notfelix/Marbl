@@ -761,7 +761,7 @@
     const keys = new Set();
     const history = [];
     const maxHistoryFrames = 900; // ~15s at 60fps
-    const orbCollectionDim = { maxCount: 12, minBrightness: 0.5 }; // adjust minBrightness to change how dim orbs get at full collection
+    const orbCollectionDim = { maxCount: 12, minBrightness: 0.3 }; // adjust minBrightness to change how dim orbs get at full collection
     let orbAnimTime = 0;
     let debugSkippedOrbBatches = 0;
     let currentSupport = null;
@@ -1263,7 +1263,7 @@
         const baseStrength = orb.collected ? Math.max(0, 1 - orb.dissolve) * brightnessScale : 1.0;
         const flash = orb.collectFlash ? clamp01(orb.collectFlash / orbCollectFlashDuration) : 0;
         const flashBoost = orbFlashEnvelope(flash);
-        const strength = baseStrength * orbGlowPulse(orb, time) * (1 + flashBoost * 3.2) * weight * collectionFactor;
+        const strength = baseStrength * orbGlowPulse(orb, time) * (1 + flashBoost * 1.0) * weight * collectionFactor;
         const levelY = levels[renderLevelIndex]?.y || 0;
         const satOffset = (orb.sats && orb.sats.length) ? satelliteOffset(orb.sats[0], time, 0) : null;
         const rawX = satOffset ? orb.pos.x + satOffset.x : orb.pos.x;
