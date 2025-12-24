@@ -858,7 +858,6 @@
     const maxHistoryFrames = 900; // ~15s at 60fps
     const orbCollectionDim = { maxCount: 4, minBrightness: 0.3 }; // adjust minBrightness to change how dim orbs get at full collection
     let orbAnimTime = 0;
-    let debugSkippedOrbBatches = 0;
     let currentSupport = null;
     let lastGroundedLevel = null;
     let lastGroundSurfaceHeight = null;
@@ -910,8 +909,7 @@
           const nextY = levels[nextIndex].y;
           const progress = (currentY - marble.y) / (currentY - nextY);
           return clamp01(progress);
-        })(),
-        debugSkippedOrbBatches
+        })()
       };
     }
 
@@ -985,7 +983,6 @@
           }
         });
       }
-      debugSkippedOrbBatches = state.debugSkippedOrbBatches ?? 0;
     }
 
     function pushHistory() {
@@ -1140,16 +1137,11 @@
     }
 
     function skipNextOrbBatch() {
-      const batchSize = 1;
-      const start = debugSkippedOrbBatches * batchSize;
-      if (start >= orbs.length) return;
-      const end = Math.min(orbs.length, start + batchSize);
-      for (let i = start; i < end; i++) {
-        orbs[i].collected = true;
-        orbs[i].dissolve = 1;
-      }
-      debugSkippedOrbBatches++;
-      console.log(`Debug: skipped orb batch ${debugSkippedOrbBatches}`);
+      const orb = orbs.find(o => !o.collected);
+      if (!orb) return;
+      orb.collected = true;
+      orb.dissolve = 1;
+      console.log(`Debug: skipped orb`);
     }
 
     function collapseEase(t) {
