@@ -871,7 +871,10 @@
     const orbs = [];
     const keys = new Set();
     const history = [];
-    const maxHistoryFrames = 900; // ~15s at 60fps
+    const maxHistoryFrames = 3600; // ~60s at 60fps
+    const starHistory = [];
+    const maxStarHistoryFrames = 180; // ~3s at 60fps for accurate star reversal
+    let starsReversed = false;
     const orbCollectionDim = { maxCount: 4, minBrightness: 0.3 }; // adjust minBrightness to change how dim orbs get at full collection
     let orbAnimTime = 0;
     let currentSupport = null;
@@ -912,7 +915,6 @@
           orbitHeight: o.orbitHeight,
           orbitSpeed: o.orbitSpeed
         })),
-        stars: stars.map(s => ({ x: s.x, y: s.y, vx: s.vx, vy: s.vy, size: s.size, alpha: s.alpha })),
         collapses: pedestalCollapses.map(c => ({ started: c.started, progress: c.progress })),
         orbAnimTime,
         levelIndex: getActiveLevel()?.index ?? 0,
@@ -1007,20 +1009,6 @@
           orbs[i].orbitSpeed = o.orbitSpeed ?? orbs[i].orbitSpeed ?? 1.2;
         }
       });
-      if (state.stars) {
-        stars.length = state.stars.length;
-        for (let i = 0; i < state.stars.length; i++) {
-          const src = state.stars[i];
-          let dst = stars[i];
-          if (!dst) dst = stars[i] = { x: 0, y: 0, vx: 0, vy: 0, size: 1, alpha: 1 };
-          dst.x = src.x;
-          dst.y = src.y;
-          dst.vx = src.vx;
-          dst.vy = src.vy;
-          dst.size = src.size;
-          dst.alpha = src.alpha;
-        }
-      }
       if (Array.isArray(state.collapses)) {
         state.collapses.forEach((c, i) => {
           if (pedestalCollapses[i]) {
@@ -1031,15 +1019,54 @@
       }
     }
 
+    function captureStarState() {
+      return stars.map(s => ({ x: s.x, y: s.y, vx: s.vx, vy: s.vy, size: s.size, alpha: s.alpha }));
+    }
+
+    function applyStarState(starState) {
+      stars.length = starState.length;
+      for (let i = 0; i < starState.length; i++) {
+        const src = starState[i];
+        let dst = stars[i];
+        if (!dst) dst = stars[i] = { x: 0, y: 0, vx: 0, vy: 0, size: 1, alpha: 1 };
+        dst.x = src.x;
+        dst.y = src.y;
+        dst.vx = src.vx;
+        dst.vy = src.vy;
+        dst.size = src.size;
+        dst.alpha = src.alpha;
+      }
+    }
+
+    function reverseStarVelocities() {
+      for (const star of stars) {
+        star.vx = -star.vx;
+        star.vy = -star.vy;
+      }
+    }
+
     function pushHistory() {
       history.push(captureState());
       if (history.length > maxHistoryFrames) history.shift();
+      // Separate star history with shorter duration
+      starHistory.push(captureStarState());
+      if (starHistory.length > maxStarHistoryFrames) starHistory.shift();
     }
 
     function rewindStep() {
       if (history.length > 1) {
         history.pop(); // discard current
         applyState(history[history.length - 1]);
+      }
+      // Handle star rewind separately
+      if (starHistory.length > 1) {
+        starHistory.pop();
+        applyStarState(starHistory[starHistory.length - 1]);
+        starsReversed = false;
+      } else if (!starsReversed) {
+        // Star history exhausted - reverse velocities for approximate rewind effect
+        reverseStarVelocities();
+        starsReversed = true;
       }
     }
 
@@ -1943,7 +1970,16 @@
           updateWildOrbs(dt);
           orbAnimTime += delta; // Keep animation time advancing for wild orb rainbow effect
         }
+        // When star history is exhausted, keep stars moving with reversed velocities
+        if (starsReversed) {
+          updateStars(dt);
+        }
       } else {
+        // Transition from rewind to forward: un-reverse star velocities
+        if (starsReversed) {
+          reverseStarVelocities();
+          starsReversed = false;
+        }
         updateInput(dt);
         updatePhysics(dt);
         updateStars(dt);
