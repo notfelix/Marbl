@@ -948,8 +948,36 @@
       orbAnimTime = state.orbAnimTime ?? orbAnimTime;
       state.orbs.forEach((o,i) => {
         if (orbs[i]) {
-          // Wild orbs ignore rewind - they stay collected once collected
-          if (orbs[i].wild) return;
+          // Wild orbs stay collected once collected, but still update position for smooth rewind
+          if (orbs[i].wild) {
+            if (orbs[i].collected) {
+              // Always update orbit parameters
+              orbs[i].orbitRadius = o.orbitRadius ?? orbs[i].orbitRadius ?? 40;
+              orbs[i].orbitHeight = o.orbitHeight ?? orbs[i].orbitHeight ?? 12;
+              orbs[i].orbitSpeed = o.orbitSpeed ?? orbs[i].orbitSpeed ?? 1.2;
+
+              if (o.collected) {
+                // Historical state also collected - restore position and orbitPhase from history
+                orbs[i].pos.x = o.pos.x;
+                orbs[i].pos.y = o.pos.y;
+                orbs[i].pos.z = o.pos.z;
+                orbs[i].orbitPhase = o.orbitPhase ?? orbs[i].orbitPhase ?? 0;
+                orbs[i]._rewindPastCollection = false;
+                if (o.followStart) {
+                  orbs[i].followStart = {
+                    x: o.followStart.x ?? orbs[i].pos.x,
+                    y: o.followStart.y ?? orbs[i].pos.y,
+                    z: o.followStart.z ?? orbs[i].pos.z
+                  };
+                }
+              } else {
+                // Rewinding past collection - flag for updateWildOrbs to calculate position
+                orbs[i]._rewindPastCollection = true;
+              }
+              orbs[i].vel = { x: 0, y: 0, z: 0 };
+            }
+            return;
+          }
           orbs[i].pos.x = o.pos.x;
           orbs[i].pos.y = o.pos.y;
           orbs[i].pos.z = o.pos.z;
@@ -1154,7 +1182,7 @@
       }
     }
 
-    // Update only wild orbs (used during rewind so they keep following the marble)
+    // Update only wild orbs during rewind - calculates position relative to marble
     function updateWildOrbs(dt) {
       const activeLevel = getActiveLevel() || levels[0];
       const renderLevelIndex = activeLevel?.index ?? 0;
@@ -1169,19 +1197,24 @@
           orb.collectFlash = Math.max(0, orb.collectFlash - dt);
         }
 
-        // During rewind, keep the orb locked to its orbit position (no physics)
-        const radius = orb.orbitRadius || 40;
-        const speed = orb.orbitSpeed || 1.2;
-        const height = orb.orbitHeight || 12;
-        orb.orbitPhase = (orb.orbitPhase ?? 0) + dt * speed;
-        const angle = orb.orbitPhase;
-        const bob = Math.sin(orbAnimTime * 2 + (orb.seed || 0)) * 2;
+        // If rewinding past collection, calculate position relative to marble
+        // Otherwise position was restored from history in applyState
+        if (orb._rewindPastCollection) {
+          const speed = orb.orbitSpeed || 1.2;
+          orb.orbitPhase = (orb.orbitPhase ?? 0) - dt * speed;
 
-        orb.pos.x = marble.pos.x + Math.cos(angle) * radius;
-        orb.pos.z = marble.pos.z + Math.sin(angle) * radius;
-        orb.pos.y = (marble.y - renderLevelY) + height + bob;
+          const radius = orb.orbitRadius || 40;
+          const height = orb.orbitHeight || 12;
+          const angle = orb.orbitPhase ?? 0;
+          const bob = Math.sin(orbAnimTime * 2 + (orb.seed || 0)) * 2;
+
+          orb.pos.x = marble.pos.x + Math.cos(angle) * radius;
+          orb.pos.z = marble.pos.z + Math.sin(angle) * radius;
+          orb.pos.y = (marble.y - renderLevelY) + height + bob;
+          orb.followStart = { x: orb.pos.x, y: orb.pos.y, z: orb.pos.z };
+        }
+
         orb.vel = { x: 0, y: 0, z: 0 };
-        orb.followStart = { x: orb.pos.x, y: orb.pos.y, z: orb.pos.z };
       }
     }
 
@@ -1905,9 +1938,11 @@
       if (rewinding) {
         rewindStep();
         refreshSupport();
-        // Wild orbs continue following the marble during rewind
-        updateWildOrbs(dt);
-        orbAnimTime += delta; // Keep animation time advancing for wild orb rainbow effect
+        // Only update wild orbs and animation if there's still history to rewind
+        if (history.length > 1) {
+          updateWildOrbs(dt);
+          orbAnimTime += delta; // Keep animation time advancing for wild orb rainbow effect
+        }
       } else {
         updateInput(dt);
         updatePhysics(dt);
