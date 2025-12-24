@@ -1933,7 +1933,6 @@
         followingLevels.add(idx);
       }
       for (const idx of followingLevels) {
-        if (activeLevel && idx !== activeLevel.index) continue;
         const lvl = levels[idx] || levels[0];
         const flatBoard = boardTransform(lvl?.y || 0, 0);
         const tiltedBoard = boardTransform(lvl?.y || 0);
