@@ -1070,12 +1070,28 @@
         }
       });
       if (Array.isArray(state.collapses)) {
+        // Calculate orb count after rewind (wild orbs stay collected, regular orbs restored from history)
+        const totalCollectedAfterRewind = orbs.filter(o => o.collected).length;
+
         state.collapses.forEach((c, i) => {
           if (pedestalCollapses[i]) {
             // Wild pedestals never revert their collapse - once collapsed, stay collapsed
             if (pedestalCollapses[i].wild && pedestalCollapses[i].started) {
               return;
             }
+
+            // During rewind, don't reopen pedestals if orb count doesn't meet requirement
+            const collapse = pedestalCollapses[i];
+            const required = orbsRequiredForCollapse[collapse.levelIndex] ?? Infinity;
+            const meetsRequirement = collapse.exactOrbs
+              ? totalCollectedAfterRewind === required
+              : totalCollectedAfterRewind >= required;
+
+            // If requirement not met, don't restore a more-open state (prevent reopening)
+            if (!meetsRequirement && (c.progress ?? 0) > collapse.progress) {
+              return;
+            }
+
             pedestalCollapses[i].started = !!c.started;
             pedestalCollapses[i].progress = c.progress ?? pedestalCollapses[i].progress;
           }
@@ -1117,8 +1133,54 @@
       if (starHistory.length > maxStarHistoryFrames) starHistory.shift();
     }
 
+    function wouldCrossClosedPedestal(nextState) {
+      const nextY = nextState.marble.y;
+      const currentY = marble.y;
+
+      // Only check if rewinding upward
+      if (nextY <= currentY) return false;
+
+      // Calculate orb count after applying orb state (wild orbs stay collected)
+      const totalCollectedAfterRewind = orbs.reduce((count, orb, i) => {
+        if (orb.wild && orb.collected) return count + 1;
+        return count + (nextState.orbs[i]?.collected ? 1 : 0);
+      }, 0);
+
+      // Check if crossing any level boundary going upward
+      for (let i = 0; i < levels.length; i++) {
+        const level = levels[i];
+        const collapse = collapseStateFor(i);
+        if (!collapse) continue;
+
+        const levelY = level.y;
+        // Block about a marble's diameter below the hole
+        const blockingY = levelY - marble.r * 2;
+
+        // Check if crossing from below to above this level's floor
+        if (currentY < blockingY && nextY >= blockingY) {
+          const required = orbsRequiredForCollapse[collapse.levelIndex] ?? Infinity;
+          const meetsRequirement = collapse.exactOrbs
+            ? totalCollectedAfterRewind === required
+            : totalCollectedAfterRewind >= required;
+
+          if (!meetsRequirement) {
+            return true;
+          }
+        }
+      }
+
+      return false;
+    }
+
     function rewindStep() {
       if (history.length > 1) {
+        const nextState = history[history.length - 2];
+
+        // Block rewind if it would cross a closed pedestal opening
+        if (nextState && wouldCrossClosedPedestal(nextState)) {
+          return;
+        }
+
         history.pop(); // discard current
         applyState(history[history.length - 1]);
       }
@@ -2045,6 +2107,8 @@
       if (rewinding) {
         rewindStep();
         refreshSupport();
+        // Update collapses during rewind so pedestals can close when orb count drops
+        updateCollapses(dt);
         // Only update wild orbs and animation if there's still history to rewind
         if (history.length > 1) {
           updateWildOrbs(dt);
@@ -2161,13 +2225,11 @@
       drawMarbleEffects(boardTiltM);
       gl.depthMask(true);
       gl.enable(gl.DEPTH_TEST);
-      gl.clear(gl.DEPTH_BUFFER_BIT); // let the marble render unobstructed after fading boards
       let marbleM = marbleTiltM;
       marbleM = mat4Translate(marbleM, [marble.pos.x, marble.y - activeLevelY, marble.pos.z]);
       drawMesh(meshes.marble, marbleM, [0.7,0.7,0.7], [0.1,0.1,0.1]);
 
       // Draw current-level orbs over the marble for a brighter, on-top glow
-      gl.clear(gl.DEPTH_BUFFER_BIT);
       const activeEntry = boardEntries.find(e => e.level.index === activeLevel?.index);
       if (activeEntry) {
         drawOrbs(activeEntry.matrix, orbAnimTime, activeEntry.level.index, activeEntry.alpha, { includeFollowing: false });
