@@ -37,6 +37,31 @@
       position: relative;
       z-index: 1;
     }
+    #game-container {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+    #rewind-bar-container {
+      position: absolute;
+      left: calc(1024px + 1024px * 2 / 15);
+      top: 0;
+      width: calc(1024px / 15);
+      height: 1024px;
+      background: rgba(18, 71, 179, 0.15);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    #rewind-bar {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 0%;
+      background: rgb(18, 71, 179);
+      border-radius: 4px;
+      transition: height 0.05s linear;
+    }
     .hud {
       position: absolute;
       top: 16px;
@@ -55,7 +80,12 @@
 <body>
   <canvas id="stars"></canvas>
   <div class="hud">WASD to tilt the plane</div>
-  <canvas id="c" width="1024" height="1024"></canvas>
+  <div id="game-container">
+    <canvas id="c" width="1024" height="1024"></canvas>
+    <div id="rewind-bar-container">
+      <div id="rewind-bar"></div>
+    </div>
+  </div>
   <script>
     const starCanvas = document.getElementById('stars');
     const canvas = document.getElementById('c');
@@ -65,6 +95,8 @@
       alert('WebGL2 not supported');
       throw new Error('WebGL2 not supported');
     }
+
+    const rewindBar = document.getElementById('rewind-bar');
 
     const starConfig = {
       density: 0.00014,
@@ -1735,6 +1767,10 @@
         orbAnimTime += delta;
         pushHistory();
       }
+
+      // Update rewind bar
+      const rewindFill = history.length / maxHistoryFrames;
+      rewindBar.style.height = (rewindFill * 100) + '%';
       updateCamera(dt);
       drawStars();
       updateLightsUniforms();
