@@ -702,11 +702,13 @@
     })();
     const centralPedestalIndex = pedestalReferencePositions.findIndex(p => Math.abs(p.x) < 1e-3 && Math.abs(p.z) < 1e-3);
     const topLeftPedestalIndex = pedestalReferencePositions.findIndex(p => p.x < 0 && p.z < 0);
+    const topRightPedestalIndex = pedestalReferencePositions.findIndex(p => p.x < 0 && p.z > 0);
+    const bottomLeftPedestalIndex = pedestalReferencePositions.findIndex(p => p.x > 0 && p.z < 0);
     const bottomRightPedestalIndex = pedestalReferencePositions.findIndex(p => p.x > 0 && p.z > 0);
     const pedestalLayouts = [
       [centralPedestalIndex].filter(i => i >= 0), // Level 0: center only
-      [topLeftPedestalIndex, bottomRightPedestalIndex].filter(i => i >= 0), // Level 1: corners
-      [topLeftPedestalIndex, centralPedestalIndex, bottomRightPedestalIndex].filter(i => i >= 0) // Level 2: TL, center, BR
+      [topLeftPedestalIndex, bottomRightPedestalIndex].filter(i => i >= 0), // Level 1: diagonal corners
+      [topLeftPedestalIndex, topRightPedestalIndex, bottomLeftPedestalIndex, bottomRightPedestalIndex].filter(i => i >= 0) // Level 2: all 4 corners
     ];
     const levelDrop = plane.w;
     const collapseConfig = { speed: 0.5 };
@@ -753,7 +755,8 @@
       target: { x: 0, z: 0 },
       strength: 480
     };
-    const orbConfig = { r: 12, count: 4, minCenterDistance: 220, touchRadius: 22, satelliteCount: 1 };
+    const orbConfig = { r: 12, countPerLevel: [1, 1, 2], minCenterDistance: 220, touchRadius: 22, satelliteCount: 1 };
+    const orbsRequiredForCollapse = [1, 2]; // total orbs needed to trigger collapse for level 0, level 1
     const orbFollowTransition = 0.75;
     const orbCollectFlashDuration = 0.35;
     const followingOrbLift = orbConfig.r * 0.5;
@@ -761,7 +764,7 @@
     const keys = new Set();
     const history = [];
     const maxHistoryFrames = 900; // ~15s at 60fps
-    const orbCollectionDim = { maxCount: 12, minBrightness: 0.3 }; // adjust minBrightness to change how dim orbs get at full collection
+    const orbCollectionDim = { maxCount: 4, minBrightness: 0.3 }; // adjust minBrightness to change how dim orbs get at full collection
     let orbAnimTime = 0;
     let debugSkippedOrbBatches = 0;
     let currentSupport = null;
@@ -1032,7 +1035,7 @@
     }
 
     function skipNextOrbBatch() {
-      const batchSize = orbConfig.count;
+      const batchSize = 1;
       const start = debugSkippedOrbBatches * batchSize;
       if (start >= orbs.length) return;
       const end = Math.min(orbs.length, start + batchSize);
@@ -1205,8 +1208,9 @@
 
     function updateCollapses(dt) {
       for (const collapse of pedestalCollapses) {
-        const levelOrbs = orbs.filter(o => (o.level ?? 0) === collapse.levelIndex);
-        if (!collapse.started && levelOrbs.length >= orbConfig.count && levelOrbs.every(o => o.collected)) {
+        const totalCollected = orbs.filter(o => o.collected).length;
+        const required = orbsRequiredForCollapse[collapse.levelIndex] ?? Infinity;
+        if (!collapse.started && totalCollected >= required) {
           collapse.started = true;
         }
         if (collapse.started) {
@@ -1294,7 +1298,8 @@
         };
       }
       const countForLevel = () => orbs.filter(o => o.level === levelIndex).length;
-      while (countForLevel() < orbConfig.count) {
+      const targetCount = orbConfig.countPerLevel?.[levelIndex] ?? 0;
+      while (countForLevel() < targetCount) {
         const p = randomPos();
         if (Math.hypot(p.x, p.z) < centerGuard) continue;
         let ok = true;
