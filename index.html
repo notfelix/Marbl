@@ -52,15 +52,11 @@
       border-radius: 4px;
       overflow: hidden;
     }
-    #rewind-bar {
+    #rewind-bar-container .segment {
       position: absolute;
-      bottom: 0;
       left: 0;
       right: 0;
-      height: 0%;
-      background: rgb(18, 71, 179);
-      border-radius: 4px;
-      transition: height 0.05s linear;
+      border-radius: 2px;
     }
     .hud {
       position: absolute;
@@ -82,9 +78,7 @@
   <div class="hud">WASD to tilt the plane</div>
   <div id="game-container">
     <canvas id="c" width="1024" height="1024"></canvas>
-    <div id="rewind-bar-container">
-      <div id="rewind-bar"></div>
-    </div>
+    <div id="rewind-bar-container"></div>
   </div>
   <script>
     const starCanvas = document.getElementById('stars');
@@ -96,7 +90,49 @@
       throw new Error('WebGL2 not supported');
     }
 
-    const rewindBar = document.getElementById('rewind-bar');
+    const rewindBarContainer = document.getElementById('rewind-bar-container');
+    const levelColorsCSS = [
+      'rgb(18, 71, 179)',   // Level 0 blue
+      'rgb(199, 82, 87)',   // Level 1 red
+      'rgb(46, 148, 82)',   // Level 2 green
+      'rgb(140, 89, 166)'   // Level 3 purple
+    ];
+
+    function updateRewindBar() {
+      // Compute segments from history
+      const segments = [];
+      for (let i = 0; i < history.length; i++) {
+        const lvl = history[i].levelIndex ?? 0;
+        if (segments.length === 0 || segments[segments.length - 1].level !== lvl) {
+          segments.push({ level: lvl, start: i, count: 1 });
+        } else {
+          segments[segments.length - 1].count++;
+        }
+      }
+
+      // Update DOM - reuse existing segment divs where possible
+      while (rewindBarContainer.children.length > segments.length) {
+        rewindBarContainer.removeChild(rewindBarContainer.lastChild);
+      }
+      while (rewindBarContainer.children.length < segments.length) {
+        const div = document.createElement('div');
+        div.className = 'segment';
+        rewindBarContainer.appendChild(div);
+      }
+
+      // Position segments from bottom to top
+      const totalFrames = maxHistoryFrames;
+      let bottomOffset = 0;
+      for (let i = 0; i < segments.length; i++) {
+        const seg = segments[i];
+        const segmentHeight = (seg.count / totalFrames) * 100;
+        const div = rewindBarContainer.children[i];
+        div.style.bottom = bottomOffset + '%';
+        div.style.height = segmentHeight + '%';
+        div.style.background = levelColorsCSS[seg.level] || levelColorsCSS[0];
+        bottomOffset += segmentHeight;
+      }
+    }
 
     const starConfig = {
       density: 0.00014,
@@ -848,7 +884,8 @@
         })),
         stars: stars.map(s => ({ x: s.x, y: s.y, vx: s.vx, vy: s.vy, size: s.size, alpha: s.alpha })),
         collapses: pedestalCollapses.map(c => ({ started: c.started, progress: c.progress })),
-        orbAnimTime
+        orbAnimTime,
+        levelIndex: getActiveLevel()?.index ?? 0
       };
     }
 
@@ -1769,8 +1806,7 @@
       }
 
       // Update rewind bar
-      const rewindFill = history.length / maxHistoryFrames;
-      rewindBar.style.height = (rewindFill * 100) + '%';
+      updateRewindBar();
       updateCamera(dt);
       drawStars();
       updateLightsUniforms();
