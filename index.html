@@ -868,7 +868,6 @@
         },
         orbCount: 0,
         orbsToCollapse: 3,
-        exactOrbs: true,
         wild: false
       },
       {
@@ -907,7 +906,7 @@
         started: false,
         progress: 0,
         wild: cfg.wild,
-        exactOrbs: cfg.exactOrbs ?? false
+        exactOrbs: cfg.exactOrbs ?? !cfg.wild
       } : null)
       .filter(Boolean);
     const orbsRequiredForCollapse = levelConfigs
@@ -2086,23 +2085,26 @@
         if (!level) return false;
         if (level.index === 0) return true;
         const aboveCollapse = collapseStateFor(level.index - 1);
-        return (aboveCollapse?.started ?? false) || marble.y <= level.y + approachFadeDepth;
+        const hasHoleOpen = (aboveCollapse?.progress ?? 0) > 0;
+        return hasHoleOpen || marble.y <= level.y + approachFadeDepth;
       }
 
       const boardEntries = [];
       for (const level of levels) {
         if (!isLevelUnlocked(level)) continue;
-        const collapseState = collapseStateFor(level.index);
+        const aboveCollapse = collapseStateFor(level.index - 1);
+        const hasHoleOpen = (aboveCollapse?.progress ?? 0) > 0;
         const heightAbove = Math.max(0, marble.y - level.y - marble.r * 2);
-        const proximityFade = heightAbove <= 0
-          ? 1
+        const heightBelow = Math.max(0, level.y - marble.y);
+        // Fade in as marble approaches from above (skip if hole is open above)
+        const approachFade = hasHoleOpen ? 1
+          : heightAbove <= 0 ? 1
           : Math.max(0, Math.min(1, 1 - (heightAbove / approachFadeDepth)));
-        const aboveState = collapseStateFor(level.index - 1);
-        const aboveStarted = !!aboveState?.started;
-        const approachFade = aboveStarted ? 1 : proximityFade;
-        const fade = collapseState?.started
-          ? Math.max(0, Math.min(1, 1 + (marble.y - level.y) / fadeDepth))
-          : approachFade;
+        // Fade out as marble falls below
+        const departureFade = heightBelow <= 0
+          ? 1
+          : Math.max(0, Math.min(1, 1 - (heightBelow / fadeDepth)));
+        const fade = Math.min(approachFade, departureFade);
         if (fade <= 0.001) continue;
         const levelHoles = holesForLevel(level);
         const mask = level.hasHole && levelHoles.length ? { holes: levelHoles } : null;
