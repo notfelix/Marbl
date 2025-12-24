@@ -2178,6 +2178,12 @@
       // Draw from lowest to highest so fading boards overlay what's below without popping
       boardEntries.sort((a, b) => a.level.y - b.level.y);
 
+      // Calculate max alpha of levels above the active level (for fading marble/orbs)
+      const activeLevelIndex = activeLevel?.index ?? 0;
+      const maxAlphaAbove = boardEntries
+        .filter(e => e.level.index < activeLevelIndex)
+        .reduce((max, e) => Math.max(max, e.alpha), 0);
+
       for (const entry of boardEntries) {
         const { level, matrix, mask } = entry;
         const palette = boardColors[level.index] || boardColors[0];
@@ -2220,19 +2226,22 @@
       const activeLevelY = activeLevel?.y || 0;
       const boardTiltM = boardTransform(activeLevelY);
       const marbleTiltM = marbleTiltScale >= 0.999 ? boardTiltM : boardTransform(activeLevelY, marbleTiltScale);
+      // Fade marble/orbs as level above fades in
+      const marbleOrbAlpha = 1 - maxAlphaAbove;
       gl.depthMask(false);
       gl.disable(gl.DEPTH_TEST);
       drawMarbleEffects(boardTiltM);
       gl.depthMask(true);
       gl.enable(gl.DEPTH_TEST);
+      gl.clear(gl.DEPTH_BUFFER_BIT); // Clear depth so marble/orbs render on top, alpha handles fade
       let marbleM = marbleTiltM;
       marbleM = mat4Translate(marbleM, [marble.pos.x, marble.y - activeLevelY, marble.pos.z]);
-      drawMesh(meshes.marble, marbleM, [0.7,0.7,0.7], [0.1,0.1,0.1]);
+      drawMesh(meshes.marble, marbleM, [0.7,0.7,0.7], [0.1,0.1,0.1], marbleOrbAlpha);
 
       // Draw current-level orbs over the marble for a brighter, on-top glow
       const activeEntry = boardEntries.find(e => e.level.index === activeLevel?.index);
       if (activeEntry) {
-        drawOrbs(activeEntry.matrix, orbAnimTime, activeEntry.level.index, activeEntry.alpha, { includeFollowing: false });
+        drawOrbs(activeEntry.matrix, orbAnimTime, activeEntry.level.index, activeEntry.alpha * marbleOrbAlpha, { includeFollowing: false });
       }
       const followingLevels = new Set();
       for (const orb of orbs) {
@@ -2254,7 +2263,7 @@
           const tiltLift = tilted[1] - flat[1];
           return tiltLift + followingOrbLift * followEase;
         };
-        drawOrbs(flatBoard, orbAnimTime, idx, 1, { followingOnly: true, liftOffset, transitionBoards: { flat: flatBoard, tilted: tiltedBoard, invFlat: flatInv } });
+        drawOrbs(flatBoard, orbAnimTime, idx, marbleOrbAlpha, { followingOnly: true, liftOffset, transitionBoards: { flat: flatBoard, tilted: tiltedBoard, invFlat: flatInv } });
       }
 
       if (!paused) rafId = requestAnimationFrame(frame);
