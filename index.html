@@ -1971,7 +1971,8 @@
           orbAnimTime += delta; // Keep animation time advancing for wild orb rainbow effect
         }
         // When star history is exhausted, keep stars moving with reversed velocities
-        if (starsReversed) {
+        // But freeze everything when main history hits zero
+        if (starsReversed && history.length > 1) {
           updateStars(dt);
         }
       } else {
