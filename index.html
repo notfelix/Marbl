@@ -640,6 +640,7 @@
     uniform int uPointCount;
     uniform vec3 uPointPos[MAX_POINTS];
     uniform float uPointIntensity[MAX_POINTS];
+    uniform vec3 uPointColor[MAX_POINTS];
     uniform int uHoleCount;
     uniform vec3 uHoleCenters[MAX_HOLES];
     uniform float uHoleRadii[MAX_HOLES];
@@ -663,7 +664,6 @@
       }
       color *= holeMask;
       // Point lights from orbs
-      vec3 warm = vec3(1.1, 0.95, 0.5);
       for (int i=0; i<MAX_POINTS; ++i) {
         if (i >= uPointCount) break;
         vec3 L = uPointPos[i] - vWorldPos;
@@ -674,7 +674,7 @@
         float ambient = 0.25;  // Minimum glow regardless of angle
         float lighting = ambient + (1.0 - ambient) * diffP;
         float atten = uPointIntensity[i] / (1.0 + dist * dist * 0.0008);
-        color += warm * lighting * atten;
+        color += uPointColor[i] * lighting * atten;
       }
       color = clamp(color, 0.0, 2.5);
       gl_FragColor = vec4(color, uAlpha);
@@ -717,6 +717,7 @@
       pointCount: gl.getUniformLocation(program, 'uPointCount'),
       pointPos: gl.getUniformLocation(program, 'uPointPos'),
       pointIntensity: gl.getUniformLocation(program, 'uPointIntensity'),
+      pointColor: gl.getUniformLocation(program, 'uPointColor'),
       holeCount: gl.getUniformLocation(program, 'uHoleCount'),
       holeCenters: gl.getUniformLocation(program, 'uHoleCenters[0]'),
       holeRadii: gl.getUniformLocation(program, 'uHoleRadii[0]'),
@@ -1389,6 +1390,7 @@
     function updateLightsUniforms() {
       const positions = new Float32Array(MAX_POINT_LIGHTS * 3);
       const intensities = new Float32Array(MAX_POINT_LIGHTS);
+      const colors = new Float32Array(MAX_POINT_LIGHTS * 3);
       const time = orbAnimTime;
       const collectionFactor = collectionBrightnessFactor();
       const candidates = [];
@@ -1425,11 +1427,24 @@
         positions[count*3+1] = transformed[1];
         positions[count*3+2] = transformed[2];
         intensities[count] = strength;
+        // Light color: warm for regular orbs, cycling blue/magenta for wild
+        if (orb.wild) {
+          const t = time * 0.8 + (orb.seed || 0);
+          const wave = (Math.sin(t * Math.PI * 2) + 1) * 0.5;
+          colors[count*3+0] = 1.0 + wave * 0.8; // Red: 1.0 to 1.8
+          colors[count*3+1] = 0.6;              // More green for brightness
+          colors[count*3+2] = 1.8;              // Very strong blue
+        } else {
+          colors[count*3+0] = 1.1;  // Warm
+          colors[count*3+1] = 0.95;
+          colors[count*3+2] = 0.5;
+        }
         count++;
       }
       gl.uniform1i(uniforms.pointCount, count);
       gl.uniform3fv(uniforms.pointPos, positions);
       gl.uniform1fv(uniforms.pointIntensity, intensities);
+      gl.uniform3fv(uniforms.pointColor, colors);
     }
 
     function spawnOrbsForLevel(levelIndex=0) {
@@ -1851,16 +1866,27 @@
           const flashAlpha = (0.65 * baseGlow + flashEase * 3.6) * (1 - dissolve);
           // Wild orbs cycle through rainbow colors
           let diffuse, specular;
+          let satAlpha = alpha * flashAlpha;
+          let ambient;
           if (orb.wild) {
-            const hue = (orbTime * 0.5 + (orb.seed || 0)) % 1;
-            const rgb = hslToRgb(hue, 1, 0.55);
-            diffuse = [rgb[0] * flashColor * 1.3, rgb[1] * flashColor * 1.3, rgb[2] * flashColor * 1.3];
-            specular = [rgb[0] * 0.3, rgb[1] * 0.3, rgb[2] * 0.3];
+            // Cycle between blue and magenta
+            const t = orbTime * 0.8 + (orb.seed || 0);
+            const wave = (Math.sin(t * Math.PI * 2) + 1) * 0.5; // 0 to 1
+            // Brighter, slightly less saturated (add some green)
+            diffuse = [wave * 2.8, 0.4, 2.5];
+            ambient = [wave * 0.9, 0.15, 0.9];
+            // Two-pass for both states: solid color base + additive glow
+            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+            const baseAlpha = orb.collected ? satAlpha * 0.5 : satAlpha * 0.35;
+            drawMesh(meshes.marble, sM, diffuse, ambient, baseAlpha);
+            gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+            const glowAlpha = orb.collected ? satAlpha * 0.45 : satAlpha * 0.3;
+            drawMesh(meshes.marble, sM, [wave * 0.45, 0.08, 0.4], [wave * 0.18, 0.03, 0.18], glowAlpha);
           } else {
             diffuse = [1.3 * flashColor, 1.05 * flashColor, 0.6 * flashColor];
-            specular = [0.25, 0.2, 0.1];
+            ambient = [0.25, 0.2, 0.1];
+            drawMesh(meshes.marble, sM, diffuse, ambient, satAlpha);
           }
-          drawMesh(meshes.marble, sM, diffuse, specular, alpha * flashAlpha);
         }
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         gl.depthMask(true);
