@@ -708,7 +708,8 @@
     const pedestalLayouts = [
       [centralPedestalIndex].filter(i => i >= 0), // Level 0: center only
       [topLeftPedestalIndex, bottomRightPedestalIndex].filter(i => i >= 0), // Level 1: diagonal corners
-      [topLeftPedestalIndex, topRightPedestalIndex, bottomLeftPedestalIndex, bottomRightPedestalIndex].filter(i => i >= 0) // Level 2: all 4 corners
+      [topLeftPedestalIndex, topRightPedestalIndex, bottomLeftPedestalIndex, bottomRightPedestalIndex].filter(i => i >= 0), // Level 2: all 4 corners
+      pedestalReferencePositions.map((_, i) => i) // Level 3: all 9 pedestals
     ];
     const levelDrop = plane.w;
     const collapseConfig = { speed: 0.5 };
@@ -718,7 +719,8 @@
     const levels = [
       { y: 0, hasHole: true },
       { y: -levelDrop, hasHole: true },
-      { y: -levelDrop * 2, hasHole: false }
+      { y: -levelDrop * 2, hasHole: true },
+      { y: -levelDrop * 3, hasHole: false }
     ];
     levels.forEach((lvl, i) => {
       lvl.index = i;
@@ -728,7 +730,8 @@
     });
     const pedestalCollapses = [
       { levelIndex: 0, pedestals: pedestalLayouts[0], started: false, progress: 0 },
-      { levelIndex: 1, pedestals: pedestalLayouts[1], started: false, progress: 0 }
+      { levelIndex: 1, pedestals: pedestalLayouts[1], started: false, progress: 0 },
+      { levelIndex: 2, pedestals: pedestalLayouts[2], started: false, progress: 0 }
     ];
     const boardColors = [
       {
@@ -748,6 +751,12 @@
         wall: [0.16, 0.48, 0.26],
         pedestal: [0.22, 0.68, 0.36],
         pedestalHole: [0.12, 0.42, 0.24]
+      },
+      {
+        floor: [0.55, 0.35, 0.65],
+        wall: [0.45, 0.28, 0.55],
+        pedestal: [0.62, 0.42, 0.72],
+        pedestalHole: [0.38, 0.22, 0.48]
       }
     ];
     const mouseAttractor = {
@@ -755,8 +764,8 @@
       target: { x: 0, z: 0 },
       strength: 480
     };
-    const orbConfig = { r: 12, countPerLevel: [1, 1, 2], minCenterDistance: 220, touchRadius: 22, satelliteCount: 1 };
-    const orbsRequiredForCollapse = [1, 2]; // total orbs needed to trigger collapse for level 0, level 1
+    const orbConfig = { r: 12, countPerLevel: [1, 1, 2, 5], minCenterDistance: 220, touchRadius: 22, satelliteCount: 1 };
+    const orbsRequiredForCollapse = [1, 2, 4]; // total orbs needed to trigger collapse for level 0, level 1, level 2
     const orbFollowTransition = 0.75;
     const orbCollectFlashDuration = 0.35;
     const followingOrbLift = orbConfig.r * 0.5;
@@ -1785,7 +1794,9 @@
           let pedM = matrix;
           pedM = mat4Translate(pedM, [pos.x, 0, pos.z]);
           pedM = mat4Scale(pedM, [1, height / pedestal.height, 1]);
-          const pedColor = pedCollapse > 0 ? palette.pedestalHole : palette.pedestal;
+          const pedColor = pedCollapse > 0
+            ? palette.pedestal.map((c, i) => c + (palette.pedestalHole[i] - c) * pedCollapse)
+            : palette.pedestal;
           if (pedCollapse > 0) gl.depthMask(false); // let the hole reveal the level below while fading
           drawMesh(pedMesh, pedM, pedColor, [0.05,0.06,0.1], pedAlpha);
           if (pedCollapse > 0) gl.depthMask(allowDepthWrite);
@@ -1885,6 +1896,7 @@
     spawnOrbsForLevel(0);
     spawnOrbsForLevel(1);
     spawnOrbsForLevel(2);
+    spawnOrbsForLevel(3);
     pushHistory();
     setupInput();
     resumeLoop();
