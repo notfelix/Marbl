@@ -355,6 +355,20 @@
       const t = clamp01(1 - clamp01(flashNorm)); // 0 at start, 1 at end
       return Math.sin(Math.PI * t); // smooth attack/decay bell
     }
+    // HSL to RGB for wild orb rainbow cycling (h in 0-1, returns [r,g,b] in 0-1)
+    function hslToRgb(h, s=1, l=0.5) {
+      const c = (1 - Math.abs(2 * l - 1)) * s;
+      const x = c * (1 - Math.abs((h * 6) % 2 - 1));
+      const m = l - c / 2;
+      let r, g, b;
+      if (h < 1/6) { r = c; g = x; b = 0; }
+      else if (h < 2/6) { r = x; g = c; b = 0; }
+      else if (h < 3/6) { r = 0; g = c; b = x; }
+      else if (h < 4/6) { r = 0; g = x; b = c; }
+      else if (h < 5/6) { r = x; g = 0; b = c; }
+      else { r = c; g = 0; b = x; }
+      return [r + m, g + m, b + m];
+    }
     function mat4Perspective(fov,aspect,near,far){
       const f=1/Math.tan(fov/2);
       const nf=1/(near-far);
@@ -933,6 +947,8 @@
       orbAnimTime = state.orbAnimTime ?? orbAnimTime;
       state.orbs.forEach((o,i) => {
         if (orbs[i]) {
+          // Wild orbs ignore rewind - they stay collected once collected
+          if (orbs[i].wild) return;
           orbs[i].pos.x = o.pos.x;
           orbs[i].pos.y = o.pos.y;
           orbs[i].pos.z = o.pos.z;
@@ -1134,6 +1150,37 @@
         orb.pos.y += orb.vel.y * dt;
         orb.pos.z += orb.vel.z * dt;
         applyOrbFloorClamp(orb, renderLevelIndex);
+      }
+    }
+
+    // Update only wild orbs (used during rewind so they keep following the marble)
+    function updateWildOrbs(dt) {
+      const activeLevel = getActiveLevel() || levels[0];
+      const renderLevelIndex = activeLevel?.index ?? 0;
+      const renderLevelY = activeLevel?.y || 0;
+      for (const orb of orbs) {
+        if (!orb.wild || !orb.collected) continue;
+        orb.following = true;
+        orb.dissolve = 0;
+        orb.renderLevel = renderLevelIndex;
+        orb.followProgress = 1;
+        if (orb.collectFlash > 0) {
+          orb.collectFlash = Math.max(0, orb.collectFlash - dt);
+        }
+
+        // During rewind, keep the orb locked to its orbit position (no physics)
+        const radius = orb.orbitRadius || 40;
+        const speed = orb.orbitSpeed || 1.2;
+        const height = orb.orbitHeight || 12;
+        orb.orbitPhase = (orb.orbitPhase ?? 0) + dt * speed;
+        const angle = orb.orbitPhase;
+        const bob = Math.sin(orbAnimTime * 2 + (orb.seed || 0)) * 2;
+
+        orb.pos.x = marble.pos.x + Math.cos(angle) * radius;
+        orb.pos.z = marble.pos.z + Math.sin(angle) * radius;
+        orb.pos.y = (marble.y - renderLevelY) + height + bob;
+        orb.vel = { x: 0, y: 0, z: 0 };
+        orb.followStart = { x: orb.pos.x, y: orb.pos.y, z: orb.pos.z };
       }
     }
 
@@ -1429,6 +1476,9 @@
           const orbitRadius = 36 + Math.random() * 12;
           const orbitHeight = 10 + Math.random() * 5;
           const orbitSpeed = 1 + Math.random() * 0.8;
+          // Determine if this orb should be wild (level 2, second orb = index 1 within level)
+          const orbIndexInLevel = countForLevel();
+          const isWild = (levelIndex === 2 && orbIndexInLevel === 1);
           orbs.push({
             level: levelIndex,
             renderLevel: levelIndex,
@@ -1445,7 +1495,8 @@
             orbitPhase,
             orbitRadius,
             orbitHeight,
-            orbitSpeed
+            orbitSpeed,
+            wild: isWild
           });
         }
       }
@@ -1798,7 +1849,18 @@
           sM = mat4Scale(sM, [sScale, sScale, sScale]);
           const flashColor = baseGlow + flashEase * 5.5;
           const flashAlpha = (0.65 * baseGlow + flashEase * 3.6) * (1 - dissolve);
-          drawMesh(meshes.marble, sM, [1.3 * flashColor,1.05 * flashColor,0.6 * flashColor], [0.25,0.2,0.1], alpha * flashAlpha);
+          // Wild orbs cycle through rainbow colors
+          let diffuse, specular;
+          if (orb.wild) {
+            const hue = (orbTime * 0.5 + (orb.seed || 0)) % 1;
+            const rgb = hslToRgb(hue, 1, 0.55);
+            diffuse = [rgb[0] * flashColor * 1.3, rgb[1] * flashColor * 1.3, rgb[2] * flashColor * 1.3];
+            specular = [rgb[0] * 0.3, rgb[1] * 0.3, rgb[2] * 0.3];
+          } else {
+            diffuse = [1.3 * flashColor, 1.05 * flashColor, 0.6 * flashColor];
+            specular = [0.25, 0.2, 0.1];
+          }
+          drawMesh(meshes.marble, sM, diffuse, specular, alpha * flashAlpha);
         }
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         gl.depthMask(true);
@@ -1817,6 +1879,9 @@
       if (rewinding) {
         rewindStep();
         refreshSupport();
+        // Wild orbs continue following the marble during rewind
+        updateWildOrbs(dt);
+        orbAnimTime += delta; // Keep animation time advancing for wild orb rainbow effect
       } else {
         updateInput(dt);
         updatePhysics(dt);
