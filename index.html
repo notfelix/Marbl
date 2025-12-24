@@ -857,16 +857,31 @@
         wild: true
       },
       {
-        // Level 3 - Purple (final level, no collapse)
-        hasHole: false,
-        pedestals: pedestalReferencePositions.map((_, i) => i),
+        // Level 3 - Purple (diagonal pedestals, requires exactly 3 orbs)
+        hasHole: true,
+        pedestals: [0, 4, 8],
         colors: {
           floor: [0.55, 0.35, 0.65],
           wall: [0.45, 0.28, 0.55],
           pedestal: [0.62, 0.42, 0.72],
           pedestalHole: [0.38, 0.22, 0.48]
         },
-        orbCount: 5,
+        orbCount: 0,
+        orbsToCollapse: 3,
+        exactOrbs: true,
+        wild: false
+      },
+      {
+        // Level 4 - New final level (no pedestals)
+        hasHole: false,
+        pedestals: [],
+        colors: {
+          floor: [0.4, 0.4, 0.45],
+          wall: [0.35, 0.35, 0.4],
+          pedestal: [0.5, 0.5, 0.55],
+          pedestalHole: [0.3, 0.3, 0.35]
+        },
+        orbCount: 0,
         orbsToCollapse: null, // final level
         wild: false
       }
@@ -891,7 +906,8 @@
         pedestals: pedestalLayouts[i],
         started: false,
         progress: 0,
-        wild: cfg.wild
+        wild: cfg.wild,
+        exactOrbs: cfg.exactOrbs ?? false
       } : null)
       .filter(Boolean);
     const orbsRequiredForCollapse = levelConfigs
@@ -1470,10 +1486,21 @@
       for (const collapse of pedestalCollapses) {
         const totalCollected = orbs.filter(o => o.collected).length;
         const required = orbsRequiredForCollapse[collapse.levelIndex] ?? Infinity;
-        if (!collapse.started && totalCollected >= required) {
+        const meetsRequirement = collapse.exactOrbs
+          ? totalCollected === required
+          : totalCollected >= required;
+        if (!collapse.started && meetsRequirement) {
           collapse.started = true;
         }
-        if (collapse.started) {
+        // For exactOrbs, only progress while requirement is met; reverse if not
+        if (collapse.exactOrbs) {
+          if (meetsRequirement) {
+            collapse.progress = Math.min(1, collapse.progress + dt * collapseConfig.speed);
+          } else {
+            collapse.progress = Math.max(0, collapse.progress - dt * collapseConfig.speed);
+            if (collapse.progress === 0) collapse.started = false;
+          }
+        } else if (collapse.started) {
           collapse.progress = Math.min(1, collapse.progress + dt * collapseConfig.speed);
         }
       }
