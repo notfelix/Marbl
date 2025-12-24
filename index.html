@@ -101,10 +101,11 @@
     function updateRewindBar() {
       // Compute segments from history, tracking fall frames (transition > 0)
       const segments = [];
+      const fallThreshold = 0.05; // ignore small dips when marble is on the edge
       for (let i = 0; i < history.length; i++) {
         const lvl = history[i].levelIndex ?? 0;
         const trans = history[i].levelTransition ?? 0;
-        const isFalling = trans > 0;
+        const isFalling = trans > fallThreshold;
         if (segments.length === 0 || segments[segments.length - 1].level !== lvl) {
           segments.push({ level: lvl, count: 1, fallFrames: isFalling ? 1 : 0 });
         } else {
