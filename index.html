@@ -571,9 +571,12 @@
         vec3 L = uPointPos[i] - vWorldPos;
         float dist = length(L) + 1e-4;
         vec3 ld = L / dist;
-        float diffP = max(dot(n, ld), 0.0);
-        float atten = uPointIntensity[i] / (1.0 + dist * dist * 0.001);
-        color += warm * diffP * atten;
+        float halfLambert = dot(n, ld) * 0.5 + 0.5;
+        float diffP = halfLambert * halfLambert;
+        float ambient = 0.25;  // Minimum glow regardless of angle
+        float lighting = ambient + (1.0 - ambient) * diffP;
+        float atten = uPointIntensity[i] / (1.0 + dist * dist * 0.0008);
+        color += warm * lighting * atten;
       }
       color = clamp(color, 0.0, 2.5);
       gl_FragColor = vec4(color, uAlpha);
@@ -1259,12 +1262,15 @@
         const strength = baseStrength * orbGlowPulse(orb, time) * (1 + flashBoost * 3.2) * weight * collectionFactor;
         const levelY = levels[renderLevelIndex]?.y || 0;
         const satOffset = (orb.sats && orb.sats.length) ? satelliteOffset(orb.sats[0], time, 0) : null;
-        const px = satOffset ? orb.pos.x + satOffset.x : orb.pos.x;
-        const py = satOffset ? orb.pos.y + satOffset.y + levelY : orb.pos.y + levelY;
-        const pz = satOffset ? orb.pos.z + satOffset.z : orb.pos.z;
-        positions[count*3+0] = px;
-        positions[count*3+1] = py;
-        positions[count*3+2] = pz;
+        const rawX = satOffset ? orb.pos.x + satOffset.x : orb.pos.x;
+        const rawY = satOffset ? orb.pos.y + satOffset.y : orb.pos.y;
+        const rawZ = satOffset ? orb.pos.z + satOffset.z : orb.pos.z;
+        // Transform orb position by board tilt to match floor coordinate space
+        const boardM = boardTransform(levelY);
+        const transformed = mat4TransformVec4(boardM, [rawX, rawY, rawZ, 1]);
+        positions[count*3+0] = transformed[0];
+        positions[count*3+1] = transformed[1];
+        positions[count*3+2] = transformed[2];
         intensities[count] = strength;
         count++;
       }
