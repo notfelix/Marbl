@@ -910,7 +910,8 @@
           const nextY = levels[nextIndex].y;
           const progress = (currentY - marble.y) / (currentY - nextY);
           return clamp01(progress);
-        })()
+        })(),
+        debugSkippedOrbBatches
       };
     }
 
@@ -984,6 +985,7 @@
           }
         });
       }
+      debugSkippedOrbBatches = state.debugSkippedOrbBatches ?? 0;
     }
 
     function pushHistory() {
