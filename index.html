@@ -99,14 +99,18 @@
     ];
 
     function updateRewindBar() {
-      // Compute segments from history
+      // Compute segments from history, tracking fall frames (transition > 0)
       const segments = [];
       for (let i = 0; i < history.length; i++) {
         const lvl = history[i].levelIndex ?? 0;
+        const trans = history[i].levelTransition ?? 0;
+        const isFalling = trans > 0;
         if (segments.length === 0 || segments[segments.length - 1].level !== lvl) {
-          segments.push({ level: lvl, start: i, count: 1 });
+          segments.push({ level: lvl, count: 1, fallFrames: isFalling ? 1 : 0 });
         } else {
-          segments[segments.length - 1].count++;
+          const seg = segments[segments.length - 1];
+          seg.count++;
+          if (isFalling) seg.fallFrames++;
         }
       }
 
@@ -129,7 +133,18 @@
         const div = rewindBarContainer.children[i];
         div.style.bottom = bottomOffset + '%';
         div.style.height = segmentHeight + '%';
-        div.style.background = levelColorsCSS[seg.level] || levelColorsCSS[0];
+        const currentColor = levelColorsCSS[seg.level] || levelColorsCSS[0];
+
+        // Apply gradient only to the falling portion at the top of the segment
+        const nextLevel = seg.level + 1;
+        if (seg.fallFrames > 0 && nextLevel < levelColorsCSS.length) {
+          const nextColor = levelColorsCSS[nextLevel];
+          // Solid portion is the non-falling frames at the bottom
+          const solidPortion = ((seg.count - seg.fallFrames) / seg.count) * 100;
+          div.style.background = `linear-gradient(to top, ${currentColor} ${solidPortion}%, ${nextColor})`;
+        } else {
+          div.style.background = currentColor;
+        }
         bottomOffset += segmentHeight;
       }
     }
@@ -885,7 +900,17 @@
         stars: stars.map(s => ({ x: s.x, y: s.y, vx: s.vx, vy: s.vy, size: s.size, alpha: s.alpha })),
         collapses: pedestalCollapses.map(c => ({ started: c.started, progress: c.progress })),
         orbAnimTime,
-        levelIndex: getActiveLevel()?.index ?? 0
+        levelIndex: getActiveLevel()?.index ?? 0,
+        levelTransition: (() => {
+          const currentLevel = getActiveLevel();
+          const currentIndex = currentLevel?.index ?? 0;
+          const nextIndex = currentIndex + 1;
+          if (nextIndex >= levels.length) return 0;
+          const currentY = currentLevel?.y ?? 0;
+          const nextY = levels[nextIndex].y;
+          const progress = (currentY - marble.y) / (currentY - nextY);
+          return clamp01(progress);
+        })()
       };
     }
 
