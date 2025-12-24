@@ -787,6 +787,7 @@
           target: { x: mouseAttractor.target.x, z: mouseAttractor.target.z }
         },
         orbs: orbs.map(o => ({
+          pos: { x: o.pos.x, y: o.pos.y, z: o.pos.z },
           level: o.level,
           renderLevel: o.renderLevel ?? o.level,
           collected: o.collected,
@@ -826,6 +827,9 @@
       orbAnimTime = state.orbAnimTime ?? orbAnimTime;
       state.orbs.forEach((o,i) => {
         if (orbs[i]) {
+          orbs[i].pos.x = o.pos.x;
+          orbs[i].pos.y = o.pos.y;
+          orbs[i].pos.z = o.pos.z;
           orbs[i].collected = o.collected;
           orbs[i].collectFlash = o.collectFlash || 0;
           orbs[i].dissolve = o.dissolve || 0;
