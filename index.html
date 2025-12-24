@@ -758,6 +758,7 @@
     const keys = new Set();
     const history = [];
     const maxHistoryFrames = 900; // ~15s at 60fps
+    const orbCollectionDim = { maxCount: 12, minBrightness: 0.5 }; // adjust minBrightness to change how dim orbs get at full collection
     let orbAnimTime = 0;
     let debugSkippedOrbBatches = 0;
     let currentSupport = null;
@@ -1220,10 +1221,20 @@
       return proximity;
     }
 
+    function collectionBrightnessFactor() {
+      const maxCount = Math.max(1, orbCollectionDim.maxCount || 12);
+      const minBrightness = Math.max(0, Math.min(1, orbCollectionDim.minBrightness ?? 0.5));
+      const collected = orbs.filter(o => o.collected).length;
+      const clampedCount = Math.min(maxCount, Math.max(1, collected));
+      const t = (clampedCount - 1) / (maxCount - 1 || 1); // 0 when only one orb collected
+      return 1 - t * (1 - minBrightness);
+    }
+
     function updateLightsUniforms() {
       const positions = new Float32Array(MAX_POINT_LIGHTS * 3);
       const intensities = new Float32Array(MAX_POINT_LIGHTS);
       const time = orbAnimTime;
+      const collectionFactor = collectionBrightnessFactor();
       const candidates = [];
       for (const orb of orbs) {
         const renderLevelIndex = orb.following ? (orb.renderLevel ?? getActiveLevel()?.index ?? orb.level) : orb.level;
@@ -1240,10 +1251,12 @@
       let count = 0;
       for (const { orb, renderLevelIndex, weight } of candidates) {
         if (count >= MAX_POINT_LIGHTS) break;
-        const baseStrength = orb.collected ? Math.max(0, 1 - orb.dissolve) : 1.0;
+        const followEase = smoothstep01(clamp01(orb.followProgress ?? 1));
+        const brightnessScale = orb.collected ? (1 - 0.5 * followEase) : 1;
+        const baseStrength = orb.collected ? Math.max(0, 1 - orb.dissolve) * brightnessScale : 1.0;
         const flash = orb.collectFlash ? clamp01(orb.collectFlash / orbCollectFlashDuration) : 0;
         const flashBoost = orbFlashEnvelope(flash);
-        const strength = baseStrength * orbGlowPulse(orb, time) * (1 + flashBoost * 3.2) * weight;
+        const strength = baseStrength * orbGlowPulse(orb, time) * (1 + flashBoost * 3.2) * weight * collectionFactor;
         const levelY = levels[renderLevelIndex]?.y || 0;
         const satOffset = (orb.sats && orb.sats.length) ? satelliteOffset(orb.sats[0], time, 0) : null;
         const px = satOffset ? orb.pos.x + satOffset.x : orb.pos.x;
@@ -1667,7 +1680,8 @@
             sM = boardM;
             sM = mat4Translate(sM, [basePos[0], basePos[1] + extraY, basePos[2]]);
           }
-          const sScale = 0.35 * (1 - dissolve);
+          const shrink = orb.collected ? (1 - 0.5 * followEase) : 1;
+          const sScale = 0.35 * shrink * (1 - dissolve);
           sM = mat4Scale(sM, [sScale, sScale, sScale]);
           const flashColor = baseGlow + flashEase * 5.5;
           const flashAlpha = (0.65 * baseGlow + flashEase * 3.6) * (1 - dissolve);
