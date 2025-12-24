@@ -804,67 +804,112 @@
     const topRightPedestalIndex = pedestalReferencePositions.findIndex(p => p.x < 0 && p.z > 0);
     const bottomLeftPedestalIndex = pedestalReferencePositions.findIndex(p => p.x > 0 && p.z < 0);
     const bottomRightPedestalIndex = pedestalReferencePositions.findIndex(p => p.x > 0 && p.z > 0);
-    const pedestalLayouts = [
-      [centralPedestalIndex].filter(i => i >= 0), // Level 0: center only
-      [topLeftPedestalIndex, bottomRightPedestalIndex].filter(i => i >= 0), // Level 1: diagonal corners
-      [topLeftPedestalIndex, topRightPedestalIndex, bottomLeftPedestalIndex, bottomRightPedestalIndex].filter(i => i >= 0), // Level 2: all 4 corners
-      pedestalReferencePositions.map((_, i) => i) // Level 3: all 9 pedestals
-    ];
     const levelDrop = plane.w;
     const collapseConfig = { speed: 0.5 };
     const approachFadeDepth = levelDrop * 0.65;
     const centralHoleRadius = pedestalFootprint * 1.05;
     const centralHoleSoftness = pedestal.ramp * 0.35;
-    const levels = [
-      { y: 0, hasHole: true },
-      { y: -levelDrop, hasHole: true },
-      { y: -levelDrop * 2, hasHole: true },
-      { y: -levelDrop * 3, hasHole: false }
-    ];
-    levels.forEach((lvl, i) => {
-      lvl.index = i;
-      const layout = pedestalLayouts[i] || [];
-      lvl.pedestalIndices = layout;
-      lvl.pedestals = layout.map(idx => pedestalReferencePositions[idx]).filter(Boolean);
-    });
-    const pedestalCollapses = [
-      { levelIndex: 0, pedestals: pedestalLayouts[0], started: false, progress: 0, wild: false },
-      { levelIndex: 1, pedestals: pedestalLayouts[1], started: false, progress: 0, wild: false },
-      { levelIndex: 2, pedestals: pedestalLayouts[2], started: false, progress: 0, wild: true }
-    ];
-    const boardColors = [
+
+    // ===========================================
+    // LEVEL CONFIGURATION - Add new levels here!
+    // ===========================================
+    const levelConfigs = [
       {
-        floor: [0.07, 0.28, 0.7],
-        wall: [0.08, 0.22, 0.6],
-        pedestal: [0.1, 0.35, 0.8],
-        pedestalHole: [0.05, 0.18, 0.5]
+        // Level 0 - Blue
+        hasHole: true,
+        pedestals: [centralPedestalIndex],
+        colors: {
+          floor: [0.07, 0.28, 0.7],
+          wall: [0.08, 0.22, 0.6],
+          pedestal: [0.1, 0.35, 0.8],
+          pedestalHole: [0.05, 0.18, 0.5]
+        },
+        orbCount: 1,
+        orbsToCollapse: 1,
+        wild: false
       },
       {
-        floor: [0.78, 0.32, 0.34],
-        wall: [0.78, 0.32, 0.34],
-        pedestal: [0.78, 0.32, 0.34],
-        pedestalHole: [0.78, 0.32, 0.34]
+        // Level 1 - Red
+        hasHole: true,
+        pedestals: [topLeftPedestalIndex, bottomRightPedestalIndex],
+        colors: {
+          floor: [0.78, 0.32, 0.34],
+          wall: [0.78, 0.32, 0.34],
+          pedestal: [0.78, 0.32, 0.34],
+          pedestalHole: [0.78, 0.32, 0.34]
+        },
+        orbCount: 1,
+        orbsToCollapse: 2,
+        wild: false
       },
       {
-        floor: [0.18, 0.58, 0.32],
-        wall: [0.16, 0.48, 0.26],
-        pedestal: [0.22, 0.68, 0.36],
-        pedestalHole: [0.12, 0.42, 0.24]
+        // Level 2 - Green
+        hasHole: true,
+        pedestals: [topLeftPedestalIndex, topRightPedestalIndex, bottomLeftPedestalIndex, bottomRightPedestalIndex],
+        colors: {
+          floor: [0.18, 0.58, 0.32],
+          wall: [0.16, 0.48, 0.26],
+          pedestal: [0.22, 0.68, 0.36],
+          pedestalHole: [0.12, 0.42, 0.24]
+        },
+        orbCount: 2,
+        orbsToCollapse: 4,
+        wild: true
       },
       {
-        floor: [0.55, 0.35, 0.65],
-        wall: [0.45, 0.28, 0.55],
-        pedestal: [0.62, 0.42, 0.72],
-        pedestalHole: [0.38, 0.22, 0.48]
+        // Level 3 - Purple (final level, no collapse)
+        hasHole: false,
+        pedestals: pedestalReferencePositions.map((_, i) => i),
+        colors: {
+          floor: [0.55, 0.35, 0.65],
+          wall: [0.45, 0.28, 0.55],
+          pedestal: [0.62, 0.42, 0.72],
+          pedestalHole: [0.38, 0.22, 0.48]
+        },
+        orbCount: 5,
+        orbsToCollapse: null, // final level
+        wild: false
       }
     ];
+
+    // Derived arrays (for compatibility with existing code)
+    const levels = levelConfigs.map((cfg, i) => {
+      const layout = cfg.pedestals.filter(idx => idx >= 0);
+      return {
+        y: -levelDrop * i,
+        hasHole: cfg.hasHole,
+        index: i,
+        pedestalIndices: layout,
+        pedestals: layout.map(idx => pedestalReferencePositions[idx]).filter(Boolean)
+      };
+    });
+    const pedestalLayouts = levelConfigs.map(cfg => cfg.pedestals.filter(idx => idx >= 0));
+    const boardColors = levelConfigs.map(cfg => cfg.colors);
+    const pedestalCollapses = levelConfigs
+      .map((cfg, i) => cfg.orbsToCollapse !== null ? {
+        levelIndex: i,
+        pedestals: pedestalLayouts[i],
+        started: false,
+        progress: 0,
+        wild: cfg.wild
+      } : null)
+      .filter(Boolean);
+    const orbsRequiredForCollapse = levelConfigs
+      .filter(cfg => cfg.orbsToCollapse !== null)
+      .map(cfg => cfg.orbsToCollapse);
+
     const mouseAttractor = {
       active: false,
       target: { x: 0, z: 0 },
       strength: 480
     };
-    const orbConfig = { r: 12, countPerLevel: [1, 1, 2, 5], minCenterDistance: 220, touchRadius: 22, satelliteCount: 1 };
-    const orbsRequiredForCollapse = [1, 2, 4]; // total orbs needed to trigger collapse for level 0, level 1, level 2
+    const orbConfig = {
+      r: 12,
+      countPerLevel: levelConfigs.map(cfg => cfg.orbCount),
+      minCenterDistance: 220,
+      touchRadius: 22,
+      satelliteCount: 1
+    };
     const orbFollowTransition = 0.75;
     const orbCollectFlashDuration = 0.35;
     const followingOrbLift = orbConfig.r * 0.5;
