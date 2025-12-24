@@ -828,9 +828,9 @@
       lvl.pedestals = layout.map(idx => pedestalReferencePositions[idx]).filter(Boolean);
     });
     const pedestalCollapses = [
-      { levelIndex: 0, pedestals: pedestalLayouts[0], started: false, progress: 0 },
-      { levelIndex: 1, pedestals: pedestalLayouts[1], started: false, progress: 0 },
-      { levelIndex: 2, pedestals: pedestalLayouts[2], started: false, progress: 0 }
+      { levelIndex: 0, pedestals: pedestalLayouts[0], started: false, progress: 0, wild: false },
+      { levelIndex: 1, pedestals: pedestalLayouts[1], started: false, progress: 0, wild: false },
+      { levelIndex: 2, pedestals: pedestalLayouts[2], started: false, progress: 0, wild: true }
     ];
     const boardColors = [
       {
@@ -1012,6 +1012,10 @@
       if (Array.isArray(state.collapses)) {
         state.collapses.forEach((c, i) => {
           if (pedestalCollapses[i]) {
+            // Wild pedestals never revert their collapse - once collapsed, stay collapsed
+            if (pedestalCollapses[i].wild && pedestalCollapses[i].started) {
+              return;
+            }
             pedestalCollapses[i].started = !!c.started;
             pedestalCollapses[i].progress = c.progress ?? pedestalCollapses[i].progress;
           }
@@ -1272,6 +1276,11 @@
       if (progress <= fadeStart) return 1;
       const t = (progress - fadeStart) / (1 - fadeStart);
       return Math.max(0, 1 - t);
+    }
+
+    function isWildPedestal(levelIndex) {
+      const collapse = pedestalCollapses.find(c => c.levelIndex === levelIndex);
+      return collapse?.wild ?? false;
     }
 
     function pedestalsForLevel(level=null) {
@@ -2040,6 +2049,7 @@
         const wallColor = palette.wall;
         for(const w of meshes.walls) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
         const pedestals = pedestalsForLevel(level);
+        const isWild = isWildPedestal(level.index);
         for(const { pos, idx } of pedestals){
           const height = pedestalHeightForIndex(idx, level);
           const pedCollapse = collapseProgressFor(level.index, idx);
@@ -2049,9 +2059,17 @@
           let pedM = matrix;
           pedM = mat4Translate(pedM, [pos.x, 0, pos.z]);
           pedM = mat4Scale(pedM, [1, height / pedestal.height, 1]);
-          const pedColor = pedCollapse > 0
+          let pedColor = pedCollapse > 0
             ? palette.pedestal.map((c, i) => c + (palette.pedestalHole[i] - c) * pedCollapse)
             : palette.pedestal;
+          // Wild pedestals cycle through rainbow colors like wild orbs
+          if (isWild) {
+            const t = orbAnimTime * 0.8 + idx * 0.5; // offset by pedestal index
+            const wave = (Math.sin(t * Math.PI * 2) + 1) * 0.5;
+            // Blend from original green to rainbow (blue-magenta cycle)
+            const wildColor = [wave * 0.7, 0.3, 0.6 + wave * 0.3];
+            pedColor = pedColor.map((c, i) => c * 0.4 + wildColor[i] * 0.6);
+          }
           if (pedCollapse > 0) gl.depthMask(false); // let the hole reveal the level below while fading
           drawMesh(pedMesh, pedM, pedColor, [0.05,0.06,0.1], pedAlpha);
           if (pedCollapse > 0) gl.depthMask(allowDepthWrite);
