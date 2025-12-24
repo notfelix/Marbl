@@ -537,7 +537,7 @@
     uniform vec3 uColor;
     uniform vec3 uAmbient;
     uniform float uAlpha;
-    const int MAX_POINTS = 4;
+    const int MAX_POINTS = 12;
     const int MAX_HOLES = 4;
     uniform int uPointCount;
     uniform vec3 uPointPos[MAX_POINTS];
@@ -622,6 +622,7 @@
       holeSoftness: gl.getUniformLocation(program, 'uHoleSoftness[0]')
     };
     const MAX_HOLES = 4;
+    const MAX_POINT_LIGHTS = 12;
     const holeCentersArr = new Float32Array(MAX_HOLES * 3);
     const holeRadiiArr = new Float32Array(MAX_HOLES);
     const holeSoftnessArr = new Float32Array(MAX_HOLES);
@@ -1206,21 +1207,43 @@
       }
     }
 
+    function lightLevelWeight(levelIndex=0) {
+      const level = levels[levelIndex];
+      if (!level) return 0;
+      // Don't light lower levels until we're approaching them or the above level has collapsed
+      if (level.index > 0) {
+        const aboveCollapse = collapseStateFor(level.index - 1);
+        if (!(aboveCollapse?.started ?? false) && marble.y > level.y + approachFadeDepth) return 0;
+      }
+      const heightAbove = Math.max(0, marble.y - level.y - marble.r * 2);
+      const proximity = heightAbove <= 0 ? 1 : Math.max(0, 1 - heightAbove / approachFadeDepth);
+      return proximity;
+    }
+
     function updateLightsUniforms() {
-      const positions = new Float32Array(12); // 4 * 3
-      const intensities = new Float32Array(4);
+      const positions = new Float32Array(MAX_POINT_LIGHTS * 3);
+      const intensities = new Float32Array(MAX_POINT_LIGHTS);
       const time = orbAnimTime;
-      let count = 0;
-      const currentLevelIndex = getActiveLevel()?.index ?? 0;
+      const candidates = [];
       for (const orb of orbs) {
-        if (count >= 4) break;
-        const renderLevelIndex = orb.following ? (orb.renderLevel ?? currentLevelIndex) : orb.level;
-        if (renderLevelIndex !== currentLevelIndex) continue;
+        const renderLevelIndex = orb.following ? (orb.renderLevel ?? getActiveLevel()?.index ?? orb.level) : orb.level;
+        const weight = lightLevelWeight(renderLevelIndex);
+        if (weight <= 0) continue;
         if (orb.collected && orb.dissolve >= 1) continue;
+        candidates.push({ orb, renderLevelIndex, weight });
+      }
+      candidates.sort((a, b) => {
+        if (a.weight !== b.weight) return b.weight - a.weight;
+        if (a.orb.collected !== b.orb.collected) return a.orb.collected ? 1 : -1;
+        return (b.orb.collectFlash || 0) - (a.orb.collectFlash || 0);
+      });
+      let count = 0;
+      for (const { orb, renderLevelIndex, weight } of candidates) {
+        if (count >= MAX_POINT_LIGHTS) break;
         const baseStrength = orb.collected ? Math.max(0, 1 - orb.dissolve) : 1.0;
         const flash = orb.collectFlash ? clamp01(orb.collectFlash / orbCollectFlashDuration) : 0;
         const flashBoost = orbFlashEnvelope(flash);
-        const strength = baseStrength * orbGlowPulse(orb, time) * (1 + flashBoost * 3.2);
+        const strength = baseStrength * orbGlowPulse(orb, time) * (1 + flashBoost * 3.2) * weight;
         const levelY = levels[renderLevelIndex]?.y || 0;
         const satOffset = (orb.sats && orb.sats.length) ? satelliteOffset(orb.sats[0], time, 0) : null;
         const px = satOffset ? orb.pos.x + satOffset.x : orb.pos.x;
