@@ -97,7 +97,8 @@
       'rgb(199, 82, 87)',   // Level 1 red
       'rgb(46, 148, 82)',   // Level 2 green
       'rgb(140, 89, 166)',  // Level 3 purple
-      'rgb(204, 136, 51)'   // Level 4 gold
+      'rgb(204, 136, 51)',  // Level 4 gold
+      'rgb(38, 140, 166)'   // Level 5 cyan/teal
     ];
 
     function updateRewindBar() {
@@ -873,14 +874,29 @@
         wild: false
       },
       {
-        // Level 4 - Gold final level (4 pedestals like level 2, but not wild)
-        hasHole: false,
+        // Level 4 - Gold (4 pedestals, fixed wild orb in center, requires exactly 4 orbs)
+        hasHole: true,
         pedestals: [topLeftPedestalIndex, topRightPedestalIndex, bottomLeftPedestalIndex, bottomRightPedestalIndex],
         colors: {
           floor: [0.75, 0.5, 0.15],
           wall: [0.65, 0.43, 0.12],
           pedestal: [0.85, 0.57, 0.18],
           pedestalHole: [0.55, 0.36, 0.1]
+        },
+        orbCount: 1,
+        orbsToCollapse: 4,
+        wild: false,
+        fixedOrb: { x: 0, z: 0, wild: true } // wild orb in the center
+      },
+      {
+        // Level 5 - Cyan/Teal final level (blank)
+        hasHole: false,
+        pedestals: [],
+        colors: {
+          floor: [0.15, 0.55, 0.65],
+          wall: [0.12, 0.45, 0.55],
+          pedestal: [0.18, 0.62, 0.72],
+          pedestalHole: [0.1, 0.38, 0.48]
         },
         orbCount: 0,
         orbsToCollapse: null, // final level
@@ -1688,6 +1704,7 @@
 
     function spawnOrbsForLevel(levelIndex=0) {
       const level = levels[levelIndex] || levels[0];
+      const levelCfg = levelConfigs[levelIndex];
       const margin = marble.r + orbConfig.r * 2 + 20;
       const centerGuard = orbConfig.minCenterDistance;
       function randomPos() {
@@ -1695,6 +1712,54 @@
           x: (Math.random() * 2 - 1) * (plane.w / 2 - margin),
           z: (Math.random() * 2 - 1) * (plane.h / 2 - margin)
         };
+      }
+      function createOrb(p, isWild) {
+        const yLocal = (levelHeightAt(level, p.x, p.z) - level.y) + orbConfig.r;
+        const seed = Math.random() * Math.PI * 2;
+        const sats=[];
+        for(let k=0;k<(orbConfig.satelliteCount || 1);k++){
+          // random axis
+          let ax=Math.random()*2-1, ay=Math.random()*2-1, az=Math.random()*2-1;
+          const axisLen=Math.hypot(ax,ay,az)||1;
+          ax/=axisLen; ay/=axisLen; az/=axisLen;
+          // base direction orthogonal to axis
+          let bx=ay, by=-ax, bz=0;
+          if(Math.hypot(bx,by,bz)<1e-3){bx=0; by=az; bz=-ay;}
+          const bl=Math.hypot(bx,by,bz)||1;
+          bx/=bl; by/=bl; bz/=bl;
+          const radius=orbConfig.r*(1.6+Math.random()*0.5);
+          const speed=1.4+Math.random()*0.8;
+          const phase=Math.random()*Math.PI*2;
+          sats.push({axis:{x:ax,y:ay,z:az}, base:{x:bx*radius,y:by*radius,z:bz*radius}, speed, phase});
+        }
+        const orbitPhase = Math.random() * Math.PI * 2;
+        const orbitRadius = 36 + Math.random() * 12;
+        const orbitHeight = 10 + Math.random() * 5;
+        const orbitSpeed = 1 + Math.random() * 0.8;
+        orbs.push({
+          level: levelIndex,
+          renderLevel: levelIndex,
+          pos: { x: p.x, y: yLocal, z: p.z },
+          collected: false,
+          collectFlash: 0,
+          following: false,
+          followProgress: 1,
+          followStart: null,
+          vel: { x: 0, y: 0, z: 0 },
+          dissolve: 0,
+          seed,
+          sats,
+          orbitPhase,
+          orbitRadius,
+          orbitHeight,
+          orbitSpeed,
+          wild: isWild
+        });
+      }
+      // Handle fixed orb position if specified
+      if (levelCfg.fixedOrb) {
+        createOrb({ x: levelCfg.fixedOrb.x, z: levelCfg.fixedOrb.z }, levelCfg.fixedOrb.wild);
+        return; // Fixed orb levels only have the fixed orb
       }
       const countForLevel = () => orbs.filter(o => o.level === levelIndex).length;
       const targetCount = orbConfig.countPerLevel?.[levelIndex] ?? 0;
@@ -1708,50 +1773,10 @@
           if (Math.hypot(dx, dz) < (orbConfig.r * 2 + 30)) { ok = false; break; }
         }
         if (ok) {
-          const yLocal = (levelHeightAt(level, p.x, p.z) - level.y) + orbConfig.r;
-          const seed = Math.random() * Math.PI * 2;
-          const sats=[];
-          for(let k=0;k<(orbConfig.satelliteCount || 1);k++){
-            // random axis
-            let ax=Math.random()*2-1, ay=Math.random()*2-1, az=Math.random()*2-1;
-            const axisLen=Math.hypot(ax,ay,az)||1;
-            ax/=axisLen; ay/=axisLen; az/=axisLen;
-            // base direction orthogonal to axis
-            let bx=ay, by=-ax, bz=0;
-            if(Math.hypot(bx,by,bz)<1e-3){bx=0; by=az; bz=-ay;}
-            const bl=Math.hypot(bx,by,bz)||1;
-            bx/=bl; by/=bl; bz/=bl;
-            const radius=orbConfig.r*(1.6+Math.random()*0.5);
-            const speed=1.4+Math.random()*0.8;
-            const phase=Math.random()*Math.PI*2;
-            sats.push({axis:{x:ax,y:ay,z:az}, base:{x:bx*radius,y:by*radius,z:bz*radius}, speed, phase});
-          }
-          const orbitPhase = Math.random() * Math.PI * 2;
-          const orbitRadius = 36 + Math.random() * 12;
-          const orbitHeight = 10 + Math.random() * 5;
-          const orbitSpeed = 1 + Math.random() * 0.8;
           // Determine if this orb should be wild (level 2, second orb = index 1 within level)
           const orbIndexInLevel = countForLevel();
           const isWild = (levelIndex === 2 && orbIndexInLevel === 1);
-          orbs.push({
-            level: levelIndex,
-            renderLevel: levelIndex,
-            pos: { x: p.x, y: yLocal, z: p.z },
-            collected: false,
-            collectFlash: 0,
-            following: false,
-            followProgress: 1,
-            followStart: null,
-            vel: { x: 0, y: 0, z: 0 },
-            dissolve: 0,
-            seed,
-            sats,
-            orbitPhase,
-            orbitRadius,
-            orbitHeight,
-            orbitSpeed,
-            wild: isWild
-          });
+          createOrb(p, isWild);
         }
       }
     }
@@ -2434,6 +2459,7 @@
     spawnOrbsForLevel(1);
     spawnOrbsForLevel(2);
     spawnOrbsForLevel(3);
+    spawnOrbsForLevel(4);
     pushHistory();
     setupInput();
     resumeLoop();
