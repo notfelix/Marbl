@@ -2179,9 +2179,11 @@
       boardEntries.sort((a, b) => a.level.y - b.level.y);
 
       // Calculate max alpha of levels above the active level (for fading marble/orbs)
+      // Skip levels where the marble is in the hole - it's visible through the hole
       const activeLevelIndex = activeLevel?.index ?? 0;
       const maxAlphaAbove = boardEntries
         .filter(e => e.level.index < activeLevelIndex)
+        .filter(e => !isPointInHole(e.level, marble.pos.x, marble.pos.z))
         .reduce((max, e) => Math.max(max, e.alpha), 0);
 
       for (const entry of boardEntries) {
