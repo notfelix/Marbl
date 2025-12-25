@@ -1957,8 +1957,8 @@
       if (marble.pos.z < minZ) { marble.pos.z = minZ; marble.vel.z *= -0.6; }
       if (marble.pos.z > maxZ) { marble.pos.z = maxZ; marble.vel.z *= -0.6; }
 
-      // Inner wall collision for level 4
-      if (landingSupport?.level?.index === 4) {
+      // Inner wall collision for level 4 (only when grounded on level 4, not falling through)
+      if (landingSupport?.level?.index === 4 && landingSupport.support > 0.5) {
         const spacing = pedestalGrid.spacing;
         const wallHalfWidth = pedestal.topSize / 2;
         const wallOuterX1 = -spacing - wallHalfWidth - marble.r;
