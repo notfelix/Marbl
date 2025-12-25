@@ -2998,6 +2998,26 @@
             current.progress = saved.progress;
           }
         }
+        // Respawn orbs (preserving collected state where possible)
+        const collectedPositions = orbs
+          .filter(o => o.collected)
+          .map(o => ({ level: o.level, x: Math.round(o.pos.x), z: Math.round(o.pos.z) }));
+        orbs.length = 0;
+        for (let i = 0; i < levels.length; i++) {
+          spawnOrbsForLevel(i);
+        }
+        // Re-mark orbs as collected if they were at same position
+        for (const orb of orbs) {
+          const wasCollected = collectedPositions.some(c =>
+            c.level === orb.level &&
+            Math.abs(c.x - Math.round(orb.pos.x)) < 10 &&
+            Math.abs(c.z - Math.round(orb.pos.z)) < 10
+          );
+          if (wasCollected) {
+            orb.collected = true;
+            orb.dissolve = 1;
+          }
+        }
         // Just refresh support without moving marble
         refreshSupport();
         // Notify parent that reload is complete
