@@ -936,6 +936,8 @@
     const starHistory = [];
     const maxStarHistoryFrames = 180; // ~3s at 60fps for accurate star reversal
     let starsReversed = false;
+    const rewindSpeed = 1.5;
+    let rewindAccumulator = 0;
     const orbCollectionDim = { maxCount: 4, minBrightness: 0.3 }; // adjust minBrightness to change how dim orbs get at full collection
     let orbAnimTime = 0;
     let currentSupport = null;
@@ -2139,7 +2141,16 @@
 
       const rewinding = keys.has('Space');
       if (rewinding) {
-        const rewindBlocked = rewindStep();
+        rewindAccumulator += rewindSpeed;
+        let rewindBlocked = false;
+        while (rewindAccumulator >= 1) {
+          rewindAccumulator -= 1;
+          if (rewindStep()) {
+            rewindBlocked = true;
+            rewindAccumulator = 0; // Stop accumulating when blocked
+            break;
+          }
+        }
         refreshSupport();
         // Update collapses during rewind so pedestals can close when orb count drops
         updateCollapses(dt);
@@ -2154,6 +2165,7 @@
           updateStars(dt);
         }
       } else {
+        rewindAccumulator = 0;
         // Transition from rewind to forward: un-reverse star velocities
         if (starsReversed) {
           reverseStarVelocities();
