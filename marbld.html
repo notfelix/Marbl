@@ -765,21 +765,22 @@
       };
     }
 
+    function rgbToHue(r, g, b) {
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      if (max === min) return 0;
+      let h;
+      if (max === r) h = (g - b) / (max - min);
+      else if (max === g) h = 2 + (b - r) / (max - min);
+      else h = 4 + (r - g) / (max - min);
+      h = h / 6;
+      if (h < 0) h += 1;
+      return h;
+    }
+
     function suggestNextColor(existingLevels) {
       // Suggest a hue that's different from existing levels
-      const usedHues = existingLevels.map(l => {
-        const [r, g, b] = l.colors.floor;
-        const max = Math.max(r, g, b);
-        const min = Math.min(r, g, b);
-        if (max === min) return 0;
-        let h;
-        if (max === r) h = (g - b) / (max - min);
-        else if (max === g) h = 2 + (b - r) / (max - min);
-        else h = 4 + (r - g) / (max - min);
-        h = h / 6;
-        if (h < 0) h += 1;
-        return h;
-      });
+      const usedHues = existingLevels.map(l => rgbToHue(...l.colors.floor));
 
       // Find the largest gap in used hues
       if (usedHues.length === 0) return 0.6; // Start with blue
@@ -1115,10 +1116,17 @@
           const currentHex = rgbToHex(...level.colors[key]);
           picker.value = currentHex;
           picker.onchange = () => {
-            level.colors[key] = hexToRgb(picker.value);
+            const rgb = hexToRgb(picker.value);
+            if (key === 'floor') {
+              // Auto-generate all colors from floor hue
+              const hue = rgbToHue(...rgb);
+              level.colors = generateHarmoniousColors(hue);
+            } else {
+              level.colors[key] = rgb;
+            }
             renderEditor();
             renderLevelList();
-                applyToGame();
+            applyToGame();
           };
           picker.click();
         });
@@ -1127,10 +1135,17 @@
       document.querySelectorAll('.color-hex').forEach(input => {
         input.addEventListener('change', () => {
           const key = input.dataset.colorKey;
-          level.colors[key] = hexToRgb(input.value);
+          const rgb = hexToRgb(input.value);
+          if (key === 'floor') {
+            // Auto-generate all colors from floor hue
+            const hue = rgbToHue(...rgb);
+            level.colors = generateHarmoniousColors(hue);
+          } else {
+            level.colors[key] = rgb;
+          }
           renderEditor();
           renderLevelList();
-            applyToGame();
+          applyToGame();
         });
       });
 
