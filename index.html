@@ -838,6 +838,11 @@
       wallHeight: 35,
       wallThickness: 14
     };
+
+    // Wall grid configuration (must match MarbLD)
+    const WALL_GRID_SIZE = 16;
+    const WALL_CELL_SIZE = plane.w / WALL_GRID_SIZE; // ~57.5 units per cell
+
     const marble = {
       r: 25,
       pos: { x: 0, z: 0 },
@@ -988,22 +993,50 @@
     // Derived arrays (for compatibility with existing code)
     let levels = levelConfigs.map((cfg, i) => {
       const layout = cfg.pedestals.filter(idx => idx >= 0);
-      // Build innerWall config with defaults for null values
-      let innerWall = null;
-      if (cfg.innerWall?.enabled) {
-        innerWall = {
+
+      // Handle walls - new grid format or legacy innerWall format
+      let walls = null;
+      let wallHeight = 60;
+      let wallMeshes = null;
+
+      if (cfg.walls && cfg.walls.length > 0) {
+        // New wall grid format
+        walls = cfg.walls;
+        wallHeight = cfg.wallHeight ?? 60;
+        wallMeshes = createWallGridMeshes(walls, wallHeight);
+      } else if (cfg.innerWall?.enabled) {
+        // Legacy innerWall format
+        const innerWall = {
           position: cfg.innerWall.position ?? defaultInnerWall.position,
           halfWidth: cfg.innerWall.halfWidth ?? defaultInnerWall.halfWidth,
           height: cfg.innerWall.height ?? defaultInnerWall.height
         };
+        wallHeight = innerWall.height;
+        wallMeshes = createInnerWallMeshes(innerWall);
+        // Convert to walls array for collision
+        walls = [];
+        const pos = innerWall.position;
+        const centerCell = WALL_GRID_SIZE / 2;
+        const posCell = Math.round(pos / WALL_CELL_SIZE);
+        for (let j = 0; j < WALL_GRID_SIZE; j++) {
+          const topRow = Math.round(centerCell - posCell);
+          const bottomRow = Math.round(centerCell + posCell - 1);
+          if (topRow >= 0 && topRow < WALL_GRID_SIZE) walls.push({ x: j, z: topRow });
+          if (bottomRow >= 0 && bottomRow < WALL_GRID_SIZE) walls.push({ x: j, z: bottomRow });
+          if (topRow >= 0 && topRow < WALL_GRID_SIZE) walls.push({ x: topRow, z: j });
+          if (bottomRow >= 0 && bottomRow < WALL_GRID_SIZE) walls.push({ x: bottomRow, z: j });
+        }
       }
+
       return {
         y: -levelDrop * i,
-        hasHole: layout.length > 0, // Hole exists if level has pedestals
+        hasHole: layout.length > 0,
         index: i,
         pedestalIndices: layout,
         pedestals: layout.map(idx => pedestalReferencePositions[idx]).filter(Boolean),
-        innerWall
+        walls,
+        wallHeight,
+        wallMeshes
       };
     });
     let pedestalLayouts = levelConfigs.map(cfg => cfg.pedestals.filter(idx => idx >= 0));
@@ -1666,20 +1699,23 @@
       // Right wall: x from w-m to w+t
       if (x >= w - m && x <= w + t && z >= -hl + m && z <= hl - m) return h;
 
-      // Inner walls (per-level configuration)
-      if (level.innerWall) {
-        const p = level.innerWall.position;
-        const iw = level.innerWall.halfWidth;
-        const ih = level.innerWall.height;
-        const im = marble.r * 0.5; // inner wall margin
-        // Top wall (X = -p)
-        if (x >= -p - iw - im && x <= -p + iw + im && z >= -p - iw && z <= p + iw) return ih;
-        // Bottom wall (X = +p)
-        if (x >= p - iw - im && x <= p + iw + im && z >= -p - iw && z <= p + iw) return ih;
-        // Left wall (Z = -p) - between top/bottom
-        if (z >= -p - iw - im && z <= -p + iw + im && x > -p + iw && x < p - iw) return ih;
-        // Right wall (Z = +p) - between top/bottom
-        if (z >= p - iw - im && z <= p + iw + im && x > -p + iw && x < p - iw) return ih;
+      // Wall grid collision
+      if (level.walls && level.walls.length > 0) {
+        const cellSize = WALL_CELL_SIZE;
+        const halfCell = cellSize / 2;
+        const margin = marble.r * 0.5;
+
+        for (const cell of level.walls) {
+          // Convert grid coords to world coords
+          const worldX = (cell.z - WALL_GRID_SIZE / 2 + 0.5) * cellSize;
+          const worldZ = (cell.x - WALL_GRID_SIZE / 2 + 0.5) * cellSize;
+
+          // Check if marble is within this wall cell (with margin for collision)
+          if (x >= worldX - halfCell - margin && x <= worldX + halfCell + margin &&
+              z >= worldZ - halfCell - margin && z <= worldZ + halfCell + margin) {
+            return level.wallHeight;
+          }
+        }
       }
 
       return 0; // Not on a wall
@@ -2051,6 +2087,32 @@
       return [createMesh(frame)];
     }
 
+    function createWallGridMeshes(walls, wallHeight = 60) {
+      if (!walls || walls.length === 0) return [];
+      const meshes = [];
+      const cellSize = WALL_CELL_SIZE;
+      const halfCell = cellSize / 2;
+      const halfFloor = plane.w / 2;
+
+      for (const cell of walls) {
+        // Convert grid coords (0-15) to world coords
+        // Grid (0,0) is top-left, (15,15) is bottom-right
+        // World X: negative=top, positive=bottom
+        // World Z: negative=left, positive=right
+        const worldX = (cell.z - WALL_GRID_SIZE / 2 + 0.5) * cellSize;
+        const worldZ = (cell.x - WALL_GRID_SIZE / 2 + 0.5) * cellSize;
+
+        // Create a box for this cell
+        const box = createBox(
+          worldX - halfCell, worldX + halfCell,  // x min/max
+          0, wallHeight,                          // y min/max
+          worldZ - halfCell, worldZ + halfCell   // z min/max
+        );
+        meshes.push(createMesh(box));
+      }
+      return meshes;
+    }
+
     // Camera/light
     const lightDir = normalize3({ x: -0.4, y: 0.8, z: 0.3 });
     // Keep the camera directly overhead for a top-down view; nudge z to avoid colinearity with the up vector
@@ -2263,39 +2325,51 @@
         if (marble.pos.z > outerMaxZ) { marble.pos.z = outerMaxZ; marble.vel.z *= -0.6; }
       }
 
-      // Inner wall collision (for levels with inner walls configured)
-      // Skip collision if marble is on top of the inner wall
-      if (currentLevel?.innerWall && landingSupport.support > 0.5) {
-        const iw = currentLevel.innerWall;
-        const onInnerWallTop = marble.y > currentLevel.y + marble.r + iw.height * 0.5;
-        if (!onInnerWallTop) {
-          const p = iw.position;
-          const t = iw.halfWidth;
+      // Wall grid collision (for levels with walls configured)
+      // Skip collision if marble is on top of the wall
+      if (currentLevel?.walls?.length > 0 && landingSupport.support > 0.5) {
+        const onWallTop = marble.y > currentLevel.y + marble.r + currentLevel.wallHeight * 0.5;
+        if (!onWallTop) {
+          const cellSize = WALL_CELL_SIZE;
+          const halfCell = cellSize / 2;
           const r = marble.r;
-          const outer1 = -p - t - r;  // outer edge of negative wall
-          const inner1 = -p + t + r;  // inner edge of negative wall
-          const inner2 = p - t - r;   // inner edge of positive wall
-          const outer2 = p + t + r;   // outer edge of positive wall
 
-          // Check collision with left wall (X = -p)
-          if (marble.pos.x > outer1 && marble.pos.x < inner1 && marble.pos.z > -p && marble.pos.z < p) {
-            if (marble.vel.x > 0) { marble.pos.x = outer1; marble.vel.x *= -0.6; }
-            else { marble.pos.x = inner1; marble.vel.x *= -0.6; }
-          }
-          // Check collision with right wall (X = +p)
-          if (marble.pos.x > inner2 && marble.pos.x < outer2 && marble.pos.z > -p && marble.pos.z < p) {
-            if (marble.vel.x > 0) { marble.pos.x = inner2; marble.vel.x *= -0.6; }
-            else { marble.pos.x = outer2; marble.vel.x *= -0.6; }
-          }
-          // Check collision with front wall (Z = -p)
-          if (marble.pos.z > outer1 && marble.pos.z < inner1 && marble.pos.x > -p && marble.pos.x < p) {
-            if (marble.vel.z > 0) { marble.pos.z = outer1; marble.vel.z *= -0.6; }
-            else { marble.pos.z = inner1; marble.vel.z *= -0.6; }
-          }
-          // Check collision with back wall (Z = +p)
-          if (marble.pos.z > inner2 && marble.pos.z < outer2 && marble.pos.x > -p && marble.pos.x < p) {
-            if (marble.vel.z > 0) { marble.pos.z = inner2; marble.vel.z *= -0.6; }
-            else { marble.pos.z = outer2; marble.vel.z *= -0.6; }
+          for (const cell of currentLevel.walls) {
+            // Convert grid coords to world coords
+            const worldX = (cell.z - WALL_GRID_SIZE / 2 + 0.5) * cellSize;
+            const worldZ = (cell.x - WALL_GRID_SIZE / 2 + 0.5) * cellSize;
+
+            // Wall bounds
+            const minX = worldX - halfCell;
+            const maxX = worldX + halfCell;
+            const minZ = worldZ - halfCell;
+            const maxZ = worldZ + halfCell;
+
+            // Check if marble is colliding with this wall cell
+            if (marble.pos.x > minX - r && marble.pos.x < maxX + r &&
+                marble.pos.z > minZ - r && marble.pos.z < maxZ + r) {
+              // Find closest edge and push out
+              const overlapLeft = marble.pos.x - (minX - r);
+              const overlapRight = (maxX + r) - marble.pos.x;
+              const overlapFront = marble.pos.z - (minZ - r);
+              const overlapBack = (maxZ + r) - marble.pos.z;
+
+              const minOverlap = Math.min(overlapLeft, overlapRight, overlapFront, overlapBack);
+
+              if (minOverlap === overlapLeft) {
+                marble.pos.x = minX - r;
+                marble.vel.x *= -0.6;
+              } else if (minOverlap === overlapRight) {
+                marble.pos.x = maxX + r;
+                marble.vel.x *= -0.6;
+              } else if (minOverlap === overlapFront) {
+                marble.pos.z = minZ - r;
+                marble.vel.z *= -0.6;
+              } else {
+                marble.pos.z = maxZ + r;
+                marble.vel.z *= -0.6;
+              }
+            }
           }
         }
       }
@@ -2608,9 +2682,8 @@
         const wallColor = palette.wall;
         gl.enable(gl.CULL_FACE);
         for(const w of meshes.walls) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
-        if (level.innerWall) {
-          const iwMeshes = level.innerWallMesh || meshes.innerWalls;
-          for(const w of iwMeshes) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
+        if (level.wallMeshes) {
+          for(const w of level.wallMeshes) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
         }
         gl.disable(gl.CULL_FACE);
         const pedestals = pedestalsForLevel(level);
@@ -2698,9 +2771,8 @@
         const wallColor = palette.wall;
         gl.enable(gl.CULL_FACE);
         for(const w of meshes.walls) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
-        if (level.innerWall) {
-          const iwMeshes = level.innerWallMesh || meshes.innerWalls;
-          for(const w of iwMeshes) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
+        if (level.wallMeshes) {
+          for(const w of level.wallMeshes) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
         }
         gl.disable(gl.CULL_FACE);
       }
@@ -2753,26 +2825,51 @@
     function rebuildDerivedArrays() {
       levels = levelConfigs.map((cfg, i) => {
         const layout = cfg.pedestals.filter(idx => idx >= 0);
-        // Build innerWall config with defaults for null values
-        let innerWall = null;
-        let innerWallMesh = null;
-        if (cfg.innerWall?.enabled) {
-          innerWall = {
+
+        // Handle walls - new grid format or legacy innerWall format
+        let walls = null;
+        let wallHeight = 60;
+        let wallMeshes = null;
+
+        if (cfg.walls && cfg.walls.length > 0) {
+          // New wall grid format
+          walls = cfg.walls;
+          wallHeight = cfg.wallHeight ?? 60;
+          wallMeshes = createWallGridMeshes(walls, wallHeight);
+        } else if (cfg.innerWall?.enabled) {
+          // Legacy innerWall format - convert to grid format for collision
+          const innerWall = {
             position: cfg.innerWall.position ?? defaultInnerWall.position,
             halfWidth: cfg.innerWall.halfWidth ?? defaultInnerWall.halfWidth,
             height: cfg.innerWall.height ?? defaultInnerWall.height
           };
-          // Create per-level inner wall mesh with specific dimensions
-          innerWallMesh = createInnerWallMeshes(innerWall);
+          wallHeight = innerWall.height;
+          // Use legacy mesh rendering for old format
+          wallMeshes = createInnerWallMeshes(innerWall);
+          // Convert to walls array for collision (approximate)
+          walls = [];
+          const pos = innerWall.position;
+          const centerCell = WALL_GRID_SIZE / 2;
+          const posCell = Math.round(pos / WALL_CELL_SIZE);
+          for (let j = 0; j < WALL_GRID_SIZE; j++) {
+            const topRow = Math.round(centerCell - posCell);
+            const bottomRow = Math.round(centerCell + posCell - 1);
+            if (topRow >= 0 && topRow < WALL_GRID_SIZE) walls.push({ x: j, z: topRow });
+            if (bottomRow >= 0 && bottomRow < WALL_GRID_SIZE) walls.push({ x: j, z: bottomRow });
+            if (topRow >= 0 && topRow < WALL_GRID_SIZE) walls.push({ x: topRow, z: j });
+            if (bottomRow >= 0 && bottomRow < WALL_GRID_SIZE) walls.push({ x: bottomRow, z: j });
+          }
         }
+
         return {
           y: -levelDrop * i,
-          hasHole: layout.length > 0, // Hole exists if level has pedestals
+          hasHole: layout.length > 0,
           index: i,
           pedestalIndices: layout,
           pedestals: layout.map(idx => pedestalReferencePositions[idx]).filter(Boolean),
-          innerWall,
-          innerWallMesh
+          walls,
+          wallHeight,
+          wallMeshes
         };
       });
       pedestalLayouts = levelConfigs.map(cfg => cfg.pedestals.filter(idx => idx >= 0));

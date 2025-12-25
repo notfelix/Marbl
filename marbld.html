@@ -412,16 +412,55 @@
       color: var(--accent);
     }
 
-    /* Inner Wall Config */
-    .inner-wall-config {
-      padding: 8px;
-      background: var(--bg);
-      border-radius: 6px;
-      margin-top: 8px;
+    /* Wall Grid Editor */
+    .wall-grid-container {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
     }
-    .inner-wall-config.disabled {
-      opacity: 0.5;
-      pointer-events: none;
+    .wall-grid-wrapper {
+      position: relative;
+      aspect-ratio: 1;
+      max-width: 280px;
+      margin: 0 auto;
+      background: var(--bg);
+      border: 2px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    #wall-grid-canvas {
+      width: 100%;
+      height: 100%;
+      cursor: crosshair;
+    }
+    .wall-grid-controls {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .wall-grid-controls .btn {
+      padding: 4px 10px;
+      font-size: 11px;
+    }
+    .wall-height-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 4px;
+    }
+    .wall-height-row label {
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+    .wall-height-row input {
+      flex: 1;
+      padding: 4px 8px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
+      font-size: 11px;
     }
 
     /* Game Preview (Left side) */
@@ -561,6 +600,12 @@
     // MarbLD Level Designer
     // ===========================================
 
+    // Wall grid configuration
+    const WALL_GRID_SIZE = 16; // 16x16 grid
+    const FLOOR_SIZE = 920;    // Game floor size in units
+    const CELL_SIZE = FLOOR_SIZE / WALL_GRID_SIZE; // ~57.5 units per cell
+    const DEFAULT_WALL_HEIGHT = 60; // Same as level 4
+
     // Default level configuration template
     const defaultLevelTemplate = {
       pedestals: [4], // center (hole is derived from having pedestals)
@@ -573,31 +618,92 @@
       // Each orb: { type: 'random' | 'fixed', x?: number, z?: number, wild: boolean }
       orbs: [{ type: 'random', wild: false }],
       wild: false, // Wild pedestals (persists through rewind)
-      innerWall: null // { enabled: false, position: 200, halfWidth: 40, height: 60 }
+      walls: [], // Array of {x, z} grid coordinates
+      wallHeight: DEFAULT_WALL_HEIGHT
     };
 
     // State
     let levels = [];
     let selectedLevelIndex = -1;
     let gameConnected = false;
+    let isWallPainting = false;
+    let wallPaintMode = 'add'; // 'add' or 'remove'
 
-    // Migrate old level format (orbCount/fixedOrb) to new format (orbs array)
+    // Migrate old level format to new format
     function migrateLevelFormat(level) {
-      if (level.orbs) return level; // Already new format
-      const orbs = [];
-      // Convert fixedOrb if present
-      if (level.fixedOrb) {
-        orbs.push({ type: 'fixed', x: level.fixedOrb.x, z: level.fixedOrb.z, wild: level.fixedOrb.wild || false });
+      // Migrate orbs (orbCount/fixedOrb → orbs array)
+      if (!level.orbs) {
+        const orbs = [];
+        if (level.fixedOrb) {
+          orbs.push({ type: 'fixed', x: level.fixedOrb.x, z: level.fixedOrb.z, wild: level.fixedOrb.wild || false });
+        }
+        const randomCount = level.orbCount || 0;
+        for (let i = 0; i < randomCount; i++) {
+          orbs.push({ type: 'random', wild: false });
+        }
+        delete level.orbCount;
+        delete level.fixedOrb;
+        level.orbs = orbs;
       }
-      // Add random orbs based on orbCount
-      const randomCount = level.orbCount || 0;
-      for (let i = 0; i < randomCount; i++) {
-        orbs.push({ type: 'random', wild: false });
+
+      // Migrate innerWall → walls array
+      if (level.innerWall && !level.walls) {
+        const walls = [];
+        if (level.innerWall.enabled) {
+          // Convert position-based inner wall to grid cells
+          // Old format: cross pattern at ±position from center
+          const pos = level.innerWall.position ?? 155;
+          const halfWidth = level.innerWall.halfWidth ?? 33;
+          // Convert to grid coordinates (0-15, center is 7.5)
+          const centerCell = WALL_GRID_SIZE / 2;
+          const posCell = Math.round(pos / CELL_SIZE);
+
+          // Create cross pattern: 4 lines from edge to near-center
+          // Top/Bottom horizontal lines and Left/Right vertical lines
+          for (let i = 0; i < WALL_GRID_SIZE; i++) {
+            // Top horizontal line (at row centerCell - posCell)
+            const topRow = Math.round(centerCell - posCell);
+            if (topRow >= 0 && topRow < WALL_GRID_SIZE) {
+              walls.push({ x: i, z: topRow });
+            }
+            // Bottom horizontal line (at row centerCell + posCell - 1)
+            const bottomRow = Math.round(centerCell + posCell - 1);
+            if (bottomRow >= 0 && bottomRow < WALL_GRID_SIZE) {
+              walls.push({ x: i, z: bottomRow });
+            }
+            // Left vertical line (at col centerCell - posCell)
+            const leftCol = Math.round(centerCell - posCell);
+            if (leftCol >= 0 && leftCol < WALL_GRID_SIZE) {
+              walls.push({ x: leftCol, z: i });
+            }
+            // Right vertical line (at col centerCell + posCell - 1)
+            const rightCol = Math.round(centerCell + posCell - 1);
+            if (rightCol >= 0 && rightCol < WALL_GRID_SIZE) {
+              walls.push({ x: rightCol, z: i });
+            }
+          }
+          // Remove duplicates
+          const seen = new Set();
+          level.walls = walls.filter(w => {
+            const key = `${w.x},${w.z}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+          level.wallHeight = level.innerWall.height ?? DEFAULT_WALL_HEIGHT;
+        } else {
+          level.walls = [];
+          level.wallHeight = DEFAULT_WALL_HEIGHT;
+        }
+        delete level.innerWall;
       }
-      // Clean up old properties
-      delete level.orbCount;
-      delete level.fixedOrb;
-      level.orbs = orbs;
+
+      // Ensure walls array exists
+      if (!level.walls) {
+        level.walls = [];
+        level.wallHeight = level.wallHeight ?? DEFAULT_WALL_HEIGHT;
+      }
+
       return level;
     }
 
@@ -877,26 +983,24 @@
           }).join('')}
         </div>
 
-        <!-- Inner Walls -->
+        <!-- Wall Grid -->
         <div class="editor-section">
-          <h3>Inner Walls</h3>
-          <div class="checkbox-row">
-            <input type="checkbox" id="has-inner-wall" ${level.innerWall?.enabled ? 'checked' : ''}>
-            <label for="has-inner-wall">Enable inner walls</label>
-          </div>
-          <div class="inner-wall-config ${!level.innerWall?.enabled ? 'disabled' : ''}" id="inner-wall-config">
-            <div class="form-row">
-              <label>Position</label>
-              <input type="number" id="inner-wall-position" value="${level.innerWall?.position ?? 200}" step="10">
+          <h3>Walls (${WALL_GRID_SIZE}x${WALL_GRID_SIZE} Grid)</h3>
+          <div class="wall-grid-container">
+            <div class="wall-grid-wrapper">
+              <canvas id="wall-grid-canvas"></canvas>
             </div>
-            <div class="form-row">
-              <label>Half Width</label>
-              <input type="number" id="inner-wall-half-width" value="${level.innerWall?.halfWidth ?? 40}" step="5">
+            <div class="wall-grid-controls">
+              <button class="btn btn-secondary" id="clear-walls-btn">Clear All</button>
+              <button class="btn btn-secondary" id="fill-border-btn">Fill Border</button>
             </div>
-            <div class="form-row">
-              <label>Height</label>
-              <input type="number" id="inner-wall-height" value="${level.innerWall?.height ?? 60}" step="5">
+            <div class="wall-height-row">
+              <label>Height:</label>
+              <input type="number" id="wall-height" value="${level.wallHeight ?? DEFAULT_WALL_HEIGHT}" step="5" min="10" max="200">
             </div>
+            <p style="font-size: 10px; color: var(--text-dim); text-align: center; margin-top: 4px;">
+              Click and drag to paint walls. Right-click to erase.
+            </p>
           </div>
         </div>
       `;
@@ -1030,31 +1134,164 @@
         });
       });
 
-      // Inner walls
-      document.getElementById('has-inner-wall')?.addEventListener('change', (e) => {
-        if (e.target.checked) {
-          level.innerWall = { enabled: true, position: 200, halfWidth: 40, height: 60 };
-        } else {
-          level.innerWall = null;
+      // Wall grid
+      setupWallGridCanvas(level);
+
+      document.getElementById('clear-walls-btn')?.addEventListener('click', () => {
+        level.walls = [];
+        renderWallGrid(level);
+        applyToGame();
+      });
+
+      document.getElementById('fill-border-btn')?.addEventListener('click', () => {
+        // Add border cells
+        for (let i = 0; i < WALL_GRID_SIZE; i++) {
+          // Top and bottom edges
+          addWallCell(level, i, 0);
+          addWallCell(level, i, WALL_GRID_SIZE - 1);
+          // Left and right edges
+          addWallCell(level, 0, i);
+          addWallCell(level, WALL_GRID_SIZE - 1, i);
         }
-        renderEditor();
+        renderWallGrid(level);
         applyToGame();
       });
 
-      document.getElementById('inner-wall-position')?.addEventListener('change', (e) => {
-        if (level.innerWall) level.innerWall.position = parseFloat(e.target.value) || 200;
+      document.getElementById('wall-height')?.addEventListener('change', (e) => {
+        level.wallHeight = parseFloat(e.target.value) || DEFAULT_WALL_HEIGHT;
         applyToGame();
       });
+    }
 
-      document.getElementById('inner-wall-half-width')?.addEventListener('change', (e) => {
-        if (level.innerWall) level.innerWall.halfWidth = parseFloat(e.target.value) || 40;
-        applyToGame();
-      });
+    // ===========================================
+    // Wall Grid Canvas
+    // ===========================================
+    function hasWallCell(level, x, z) {
+      return level.walls.some(w => w.x === x && w.z === z);
+    }
 
-      document.getElementById('inner-wall-height')?.addEventListener('change', (e) => {
-        if (level.innerWall) level.innerWall.height = parseFloat(e.target.value) || 60;
+    function addWallCell(level, x, z) {
+      if (!hasWallCell(level, x, z)) {
+        level.walls.push({ x, z });
+      }
+    }
+
+    function removeWallCell(level, x, z) {
+      level.walls = level.walls.filter(w => !(w.x === x && w.z === z));
+    }
+
+    function setupWallGridCanvas(level) {
+      const canvas = document.getElementById('wall-grid-canvas');
+      if (!canvas) return;
+
+      const rect = canvas.parentElement.getBoundingClientRect();
+      const size = Math.min(rect.width, rect.height) || 280;
+      canvas.width = size * window.devicePixelRatio;
+      canvas.height = size * window.devicePixelRatio;
+      canvas.style.width = size + 'px';
+      canvas.style.height = size + 'px';
+
+      renderWallGrid(level);
+
+      // Prevent context menu on right-click
+      canvas.oncontextmenu = (e) => e.preventDefault();
+
+      // Get cell from mouse position
+      function getCellFromEvent(e) {
+        const rect = canvas.getBoundingClientRect();
+        const x = (e.clientX - rect.left) / rect.width;
+        const z = (e.clientY - rect.top) / rect.height;
+        return {
+          x: Math.floor(x * WALL_GRID_SIZE),
+          z: Math.floor(z * WALL_GRID_SIZE)
+        };
+      }
+
+      // Mouse down - start painting
+      canvas.onmousedown = (e) => {
+        isWallPainting = true;
+        const cell = getCellFromEvent(e);
+        if (cell.x < 0 || cell.x >= WALL_GRID_SIZE || cell.z < 0 || cell.z >= WALL_GRID_SIZE) return;
+
+        // Right click = erase, left click = add
+        wallPaintMode = e.button === 2 ? 'remove' : 'add';
+
+        if (wallPaintMode === 'add') {
+          addWallCell(level, cell.x, cell.z);
+        } else {
+          removeWallCell(level, cell.x, cell.z);
+        }
+        renderWallGrid(level);
         applyToGame();
-      });
+      };
+
+      // Mouse move - continue painting
+      canvas.onmousemove = (e) => {
+        if (!isWallPainting) return;
+        const cell = getCellFromEvent(e);
+        if (cell.x < 0 || cell.x >= WALL_GRID_SIZE || cell.z < 0 || cell.z >= WALL_GRID_SIZE) return;
+
+        if (wallPaintMode === 'add') {
+          addWallCell(level, cell.x, cell.z);
+        } else {
+          removeWallCell(level, cell.x, cell.z);
+        }
+        renderWallGrid(level);
+        applyToGame();
+      };
+
+      // Mouse up - stop painting
+      canvas.onmouseup = () => {
+        isWallPainting = false;
+      };
+
+      canvas.onmouseleave = () => {
+        isWallPainting = false;
+      };
+    }
+
+    function renderWallGrid(level) {
+      const canvas = document.getElementById('wall-grid-canvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width;
+      const h = canvas.height;
+      const cellW = w / WALL_GRID_SIZE;
+      const cellH = h / WALL_GRID_SIZE;
+
+      // Clear
+      ctx.fillStyle = '#0a0f1a';
+      ctx.fillRect(0, 0, w, h);
+
+      // Draw grid lines
+      ctx.strokeStyle = '#1f2937';
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= WALL_GRID_SIZE; i++) {
+        ctx.beginPath();
+        ctx.moveTo(i * cellW, 0);
+        ctx.lineTo(i * cellW, h);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(0, i * cellH);
+        ctx.lineTo(w, i * cellH);
+        ctx.stroke();
+      }
+
+      // Draw wall cells
+      const wallColor = rgbToHex(...(level.colors?.wall || [0.25, 0.25, 0.5]));
+      ctx.fillStyle = wallColor;
+      for (const cell of level.walls || []) {
+        ctx.fillRect(cell.x * cellW + 1, cell.z * cellH + 1, cellW - 2, cellH - 2);
+      }
+
+      // Draw center marker
+      const centerX = w / 2;
+      const centerY = h / 2;
+      ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, 8, 0, Math.PI * 2);
+      ctx.stroke();
     }
 
     // ===========================================
