@@ -1538,9 +1538,47 @@
       return false;
     }
 
+    function wallHeightAt(level, x, z) {
+      const t = plane.wallThickness;
+      const h = plane.wallHeight;
+      const w = plane.w / 2;
+      const hl = plane.h / 2;
+      const m = marble.r * 0.6; // margin for stable landing
+
+      // Outer walls - check if on top of any wall (with margin for stability)
+      // Back wall: z from hl-m to hl+t
+      if (z >= hl - m && z <= hl + t && x >= -w - t && x <= w + t) return h;
+      // Front wall: z from -hl-t to -hl+m
+      if (z >= -hl - t && z <= -hl + m && x >= -w - t && x <= w + t) return h;
+      // Left wall: x from -w-t to -w+m
+      if (x >= -w - t && x <= -w + m && z >= -hl + m && z <= hl - m) return h;
+      // Right wall: x from w-m to w+t
+      if (x >= w - m && x <= w + t && z >= -hl + m && z <= hl - m) return h;
+
+      // Inner walls (level 4 only)
+      if (level.index === 4) {
+        const p = innerWall.position;
+        const iw = innerWall.halfWidth;
+        const ih = innerWall.height;
+        const im = marble.r * 0.5; // inner wall margin
+        // Top wall (X = -p)
+        if (x >= -p - iw - im && x <= -p + iw + im && z >= -p - iw && z <= p + iw) return ih;
+        // Bottom wall (X = +p)
+        if (x >= p - iw - im && x <= p + iw + im && z >= -p - iw && z <= p + iw) return ih;
+        // Left wall (Z = -p) - between top/bottom
+        if (z >= -p - iw - im && z <= -p + iw + im && x > -p + iw && x < p - iw) return ih;
+        // Right wall (Z = +p) - between top/bottom
+        if (z >= p - iw - im && z <= p + iw + im && x > -p + iw && x < p - iw) return ih;
+      }
+
+      return 0; // Not on a wall
+    }
+
     function levelHeightAt(level, x, z) {
       if (level.hasHole && isPointInHole(level, x, z)) return -Infinity;
-      const h = pedestalHeightAt(x, z, level);
+      const pedestalH = pedestalHeightAt(x, z, level);
+      const wallH = wallHeightAt(level, x, z);
+      const h = Math.max(pedestalH, wallH);
       return h + level.y;
     }
 
@@ -1983,13 +2021,34 @@
       const minZ = -h / 2 + marble.r;
       const maxZ = h / 2 - marble.r;
 
-      if (marble.pos.x < minX) { marble.pos.x = minX; marble.vel.x *= -0.6; }
-      if (marble.pos.x > maxX) { marble.pos.x = maxX; marble.vel.x *= -0.6; }
-      if (marble.pos.z < minZ) { marble.pos.z = minZ; marble.vel.z *= -0.6; }
-      if (marble.pos.z > maxZ) { marble.pos.z = maxZ; marble.vel.z *= -0.6; }
+      // Only apply floor edge collision if marble is at floor level (not on wall top)
+      const currentLevel = landingSupport?.level || levels[0];
+      const floorY = currentLevel.y;
+      const wallTopY = floorY + plane.wallHeight;
+      const onWallTop = marble.y > floorY + marble.r + plane.wallHeight * 0.5;
+
+      if (!onWallTop) {
+        if (marble.pos.x < minX) { marble.pos.x = minX; marble.vel.x *= -0.6; }
+        if (marble.pos.x > maxX) { marble.pos.x = maxX; marble.vel.x *= -0.6; }
+        if (marble.pos.z < minZ) { marble.pos.z = minZ; marble.vel.z *= -0.6; }
+        if (marble.pos.z > maxZ) { marble.pos.z = maxZ; marble.vel.z *= -0.6; }
+      } else {
+        // On wall top - allow movement on wall, but clamp to outer wall edge
+        const outerMinX = -w / 2 - plane.wallThickness + marble.r;
+        const outerMaxX = w / 2 + plane.wallThickness - marble.r;
+        const outerMinZ = -h / 2 - plane.wallThickness + marble.r;
+        const outerMaxZ = h / 2 + plane.wallThickness - marble.r;
+        if (marble.pos.x < outerMinX) { marble.pos.x = outerMinX; marble.vel.x *= -0.6; }
+        if (marble.pos.x > outerMaxX) { marble.pos.x = outerMaxX; marble.vel.x *= -0.6; }
+        if (marble.pos.z < outerMinZ) { marble.pos.z = outerMinZ; marble.vel.z *= -0.6; }
+        if (marble.pos.z > outerMaxZ) { marble.pos.z = outerMaxZ; marble.vel.z *= -0.6; }
+      }
 
       // Inner wall collision for level 4 (only when grounded on level 4, not falling through)
-      if (landingSupport?.level?.index === 4 && landingSupport.support > 0.5) {
+      // Skip collision if marble is on top of the inner wall
+      const level4FloorY = levels[4]?.y || 0;
+      const onInnerWallTop = marble.y > level4FloorY + marble.r + innerWall.height * 0.5;
+      if (landingSupport?.level?.index === 4 && landingSupport.support > 0.5 && !onInnerWallTop) {
         const p = innerWall.position;
         const t = innerWall.halfWidth;
         const r = marble.r;
