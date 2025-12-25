@@ -1706,9 +1706,9 @@
         const margin = marble.r * 0.5;
 
         for (const cell of level.walls) {
-          // Convert grid coords to world coords
-          const worldX = (cell.z - WALL_GRID_SIZE / 2 + 0.5) * cellSize;
-          const worldZ = (cell.x - WALL_GRID_SIZE / 2 + 0.5) * cellSize;
+          // Convert grid coords to world coords (must match createWallGridMeshes)
+          const worldX = -(cell.x - WALL_GRID_SIZE / 2 + 0.5) * cellSize;
+          const worldZ = -(cell.z - WALL_GRID_SIZE / 2 + 0.5) * cellSize;
 
           // Check if marble is within this wall cell (with margin for collision)
           if (x >= worldX - halfCell - margin && x <= worldX + halfCell + margin &&
@@ -2089,28 +2089,68 @@
 
     function createWallGridMeshes(walls, wallHeight = 60) {
       if (!walls || walls.length === 0) return [];
-      const meshes = [];
       const cellSize = WALL_CELL_SIZE;
       const halfCell = cellSize / 2;
-      const halfFloor = plane.w / 2;
+
+      // Build lookup set for quick neighbor checking
+      const wallSet = new Set(walls.map(w => `${w.x},${w.z}`));
+      const hasWall = (x, z) => wallSet.has(`${x},${z}`);
+
+      const positions = [];
+      const normals = [];
+
+      // Helper to add a quad (two triangles)
+      function addQuad(p1, p2, p3, p4, nx, ny, nz) {
+        // Triangle 1: p1, p2, p3
+        positions.push(...p1, ...p2, ...p3);
+        normals.push(nx, ny, nz, nx, ny, nz, nx, ny, nz);
+        // Triangle 2: p1, p3, p4
+        positions.push(...p1, ...p3, ...p4);
+        normals.push(nx, ny, nz, nx, ny, nz, nx, ny, nz);
+      }
 
       for (const cell of walls) {
-        // Convert grid coords (0-15) to world coords
-        // Grid (0,0) is top-left, (15,15) is bottom-right
-        // World X: negative=top, positive=bottom
-        // World Z: negative=left, positive=right
-        const worldX = (cell.z - WALL_GRID_SIZE / 2 + 0.5) * cellSize;
-        const worldZ = (cell.x - WALL_GRID_SIZE / 2 + 0.5) * cellSize;
+        // Convert grid coords to world coords (negated for 180 degree rotation)
+        const cx = -(cell.x - WALL_GRID_SIZE / 2 + 0.5) * cellSize;
+        const cz = -(cell.z - WALL_GRID_SIZE / 2 + 0.5) * cellSize;
 
-        // Create a box for this cell
-        const box = createBox(
-          worldX - halfCell, worldX + halfCell,  // x min/max
-          0, wallHeight,                          // y min/max
-          worldZ - halfCell, worldZ + halfCell   // z min/max
-        );
-        meshes.push(createMesh(box));
+        const x0 = cx - halfCell, x1 = cx + halfCell;
+        const y0 = 0, y1 = wallHeight;
+        const z0 = cz - halfCell, z1 = cz + halfCell;
+
+        // Top face (always visible)
+        addQuad([x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1], 0, 1, 0);
+
+        // Side faces - only if no adjacent wall
+        // Note: grid coords are negated when converted to world coords, so neighbor checks are inverted
+        // -X world face → check neighbor at cell.x + 1 (increasing grid X = decreasing world X)
+        if (!hasWall(cell.x + 1, cell.z)) {
+          addQuad([x0, y0, z1], [x0, y1, z1], [x0, y1, z0], [x0, y0, z0], -1, 0, 0);
+        }
+        // +X world face → check neighbor at cell.x - 1
+        if (!hasWall(cell.x - 1, cell.z)) {
+          addQuad([x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1], 1, 0, 0);
+        }
+        // -Z world face → check neighbor at cell.z + 1
+        if (!hasWall(cell.x, cell.z + 1)) {
+          addQuad([x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [x1, y0, z0], 0, 0, -1);
+        }
+        // +Z world face → check neighbor at cell.z - 1
+        if (!hasWall(cell.x, cell.z - 1)) {
+          addQuad([x1, y0, z1], [x1, y1, z1], [x0, y1, z1], [x0, y0, z1], 0, 0, 1);
+        }
       }
-      return meshes;
+
+      const geometry = {
+        positions: new Float32Array(positions),
+        normals: new Float32Array(normals),
+        indices: []
+      };
+      for (let i = 0; i < positions.length / 3; i++) {
+        geometry.indices.push(i);
+      }
+
+      return [createMesh(geometry)];
     }
 
     // Camera/light
@@ -2335,9 +2375,9 @@
           const r = marble.r;
 
           for (const cell of currentLevel.walls) {
-            // Convert grid coords to world coords
-            const worldX = (cell.z - WALL_GRID_SIZE / 2 + 0.5) * cellSize;
-            const worldZ = (cell.x - WALL_GRID_SIZE / 2 + 0.5) * cellSize;
+            // Convert grid coords to world coords (must match createWallGridMeshes)
+            const worldX = -(cell.x - WALL_GRID_SIZE / 2 + 0.5) * cellSize;
+            const worldZ = -(cell.z - WALL_GRID_SIZE / 2 + 0.5) * cellSize;
 
             // Wall bounds
             const minX = worldX - halfCell;
