@@ -2460,7 +2460,7 @@
         drawOrbs(flatBoard, orbAnimTime, idx, marbleOrbAlpha, { followingOnly: true, liftOffset, transitionBoards: { flat: flatBoard, tilted: tiltedBoard, invFlat: flatInv } });
       }
 
-      // Re-draw floors of levels above the marble to properly occlude it (holes still discard)
+      // Re-draw floors and walls of levels above the marble to properly occlude it (holes still discard)
       for (const entry of boardEntries) {
         if (entry.level.y <= marble.y) continue; // Only floors above the marble
         if (entry.alpha <= 0.001) continue;
@@ -2468,6 +2468,11 @@
         const palette = boardColors[level.index] || boardColors[0];
         gl.depthMask(true);
         drawMesh(meshes.floor, matrix, palette.floor, [0.04,0.06,0.1], entry.alpha, level.hasHole ? mask : null);
+        const wallColor = palette.wall;
+        for(const w of meshes.walls) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
+        if (level.index === 4) {
+          for(const w of meshes.innerWalls) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
+        }
       }
 
       if (!paused) rafId = requestAnimationFrame(frame);
