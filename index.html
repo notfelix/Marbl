@@ -1182,7 +1182,15 @@
         }
 
         history.pop(); // discard current
-        applyState(history[history.length - 1]);
+        const restoredState = history[history.length - 1];
+        applyState(restoredState);
+
+        // Update lastGroundedLevel to match the restored state's level
+        // This prevents stale level references after rewinding mid-fall
+        const levelIdx = restoredState.levelIndex ?? 0;
+        if (levels[levelIdx]) {
+          lastGroundedLevel = levels[levelIdx];
+        }
       }
       // Handle star rewind separately
       if (starHistory.length > 1) {
