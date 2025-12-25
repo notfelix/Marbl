@@ -993,13 +993,13 @@
 
       // Handle walls - new grid format or legacy innerWall format
       let walls = null;
-      let wallHeight = 60;
+      let wallHeight = pedestal.height;
       let wallMeshes = null;
 
       if (cfg.walls && cfg.walls.length > 0) {
         // New wall grid format
         walls = cfg.walls;
-        wallHeight = cfg.wallHeight ?? 60;
+        wallHeight = cfg.wallHeight ?? pedestal.height;
         wallMeshes = createWallGridMeshes(walls, wallHeight);
       } else if (cfg.innerWall?.enabled) {
         // Legacy innerWall format
@@ -2084,7 +2084,7 @@
       return [createMesh(frame)];
     }
 
-    function createWallGridMeshes(walls, wallHeight = 60) {
+    function createWallGridMeshes(walls, wallHeight = pedestal.height) {
       if (!walls || walls.length === 0) return [];
       const cellSize = WALL_CELL_SIZE;
       const halfCell = cellSize / 2;
@@ -2865,13 +2865,13 @@
 
         // Handle walls - new grid format or legacy innerWall format
         let walls = null;
-        let wallHeight = 60;
+        let wallHeight = pedestal.height;
         let wallMeshes = null;
 
         if (cfg.walls && cfg.walls.length > 0) {
           // New wall grid format
           walls = cfg.walls;
-          wallHeight = cfg.wallHeight ?? 60;
+          wallHeight = cfg.wallHeight ?? pedestal.height;
           wallMeshes = createWallGridMeshes(walls, wallHeight);
         } else if (cfg.innerWall?.enabled) {
           // Legacy innerWall format - convert to grid format for collision
