@@ -873,9 +873,9 @@
         wild: false
       },
       {
-        // Level 4 - Gold final level (no pedestals)
+        // Level 4 - Gold final level (4 pedestals like level 2, but not wild)
         hasHole: false,
-        pedestals: [],
+        pedestals: [topLeftPedestalIndex, topRightPedestalIndex, bottomLeftPedestalIndex, bottomRightPedestalIndex],
         colors: {
           floor: [0.75, 0.5, 0.15],
           wall: [0.65, 0.43, 0.12],
@@ -1781,19 +1781,19 @@
     }
 
     function createInnerWallMeshes(){
-      // Inner square walls for level 4, corners at pedestal positions from level 2
-      const spacing = pedestalGrid.spacing;
+      // Inner square walls for level 4, outer edge touches bottom of pedestal ramps
+      const innerCorner = pedestalGrid.spacing - pedestalFootprint - pedestal.topSize / 2;
       const t = pedestal.topSize / 2;  // half-width of wall (as wide as pedestal top)
       const h = pedestal.height;       // wall height same as pedestal
       const boxes = [
-        // Top wall (X = -spacing, runs along Z) - extended to cover corners
-        createBox(-spacing - t, -spacing + t, 0, h, -spacing - t, spacing + t),
-        // Bottom wall (X = +spacing, runs along Z) - extended to cover corners
-        createBox(spacing - t, spacing + t, 0, h, -spacing - t, spacing + t),
-        // Left wall (Z = -spacing, runs along X) - fits between top/bottom walls
-        createBox(-spacing + t, spacing - t, 0, h, -spacing - t, -spacing + t),
-        // Right wall (Z = +spacing, runs along X) - fits between top/bottom walls
-        createBox(-spacing + t, spacing - t, 0, h, spacing - t, spacing + t)
+        // Top wall (X = -innerCorner, runs along Z) - extended to cover corners
+        createBox(-innerCorner - t, -innerCorner + t, 0, h, -innerCorner - t, innerCorner + t),
+        // Bottom wall (X = +innerCorner, runs along Z) - extended to cover corners
+        createBox(innerCorner - t, innerCorner + t, 0, h, -innerCorner - t, innerCorner + t),
+        // Left wall (Z = -innerCorner, runs along X) - fits between top/bottom walls
+        createBox(-innerCorner + t, innerCorner - t, 0, h, -innerCorner - t, -innerCorner + t),
+        // Right wall (Z = +innerCorner, runs along X) - fits between top/bottom walls
+        createBox(-innerCorner + t, innerCorner - t, 0, h, innerCorner - t, innerCorner + t)
       ];
       return boxes.map(createMesh);
     }
@@ -1959,38 +1959,38 @@
 
       // Inner wall collision for level 4 (only when grounded on level 4, not falling through)
       if (landingSupport?.level?.index === 4 && landingSupport.support > 0.5) {
-        const spacing = pedestalGrid.spacing;
+        const innerCorner = pedestalGrid.spacing - pedestalFootprint - pedestal.topSize / 2;
         const wallHalfWidth = pedestal.topSize / 2;
-        const wallOuterX1 = -spacing - wallHalfWidth - marble.r;
-        const wallInnerX1 = -spacing + wallHalfWidth + marble.r;
-        const wallInnerX2 = spacing - wallHalfWidth - marble.r;
-        const wallOuterX2 = spacing + wallHalfWidth + marble.r;
-        const wallOuterZ1 = -spacing - wallHalfWidth - marble.r;
-        const wallInnerZ1 = -spacing + wallHalfWidth + marble.r;
-        const wallInnerZ2 = spacing - wallHalfWidth - marble.r;
-        const wallOuterZ2 = spacing + wallHalfWidth + marble.r;
+        const wallOuterX1 = -innerCorner - wallHalfWidth - marble.r;
+        const wallInnerX1 = -innerCorner + wallHalfWidth + marble.r;
+        const wallInnerX2 = innerCorner - wallHalfWidth - marble.r;
+        const wallOuterX2 = innerCorner + wallHalfWidth + marble.r;
+        const wallOuterZ1 = -innerCorner - wallHalfWidth - marble.r;
+        const wallInnerZ1 = -innerCorner + wallHalfWidth + marble.r;
+        const wallInnerZ2 = innerCorner - wallHalfWidth - marble.r;
+        const wallOuterZ2 = innerCorner + wallHalfWidth + marble.r;
 
-        // Check collision with left wall (X = -spacing)
+        // Check collision with left wall (X = -innerCorner)
         if (marble.pos.x > wallOuterX1 && marble.pos.x < wallInnerX1 &&
-            marble.pos.z > -spacing && marble.pos.z < spacing) {
+            marble.pos.z > -innerCorner && marble.pos.z < innerCorner) {
           if (marble.vel.x > 0) { marble.pos.x = wallOuterX1; marble.vel.x *= -0.6; }
           else { marble.pos.x = wallInnerX1; marble.vel.x *= -0.6; }
         }
-        // Check collision with right wall (X = +spacing)
+        // Check collision with right wall (X = +innerCorner)
         if (marble.pos.x > wallInnerX2 && marble.pos.x < wallOuterX2 &&
-            marble.pos.z > -spacing && marble.pos.z < spacing) {
+            marble.pos.z > -innerCorner && marble.pos.z < innerCorner) {
           if (marble.vel.x > 0) { marble.pos.x = wallInnerX2; marble.vel.x *= -0.6; }
           else { marble.pos.x = wallOuterX2; marble.vel.x *= -0.6; }
         }
-        // Check collision with front wall (Z = -spacing)
+        // Check collision with front wall (Z = -innerCorner)
         if (marble.pos.z > wallOuterZ1 && marble.pos.z < wallInnerZ1 &&
-            marble.pos.x > -spacing && marble.pos.x < spacing) {
+            marble.pos.x > -innerCorner && marble.pos.x < innerCorner) {
           if (marble.vel.z > 0) { marble.pos.z = wallOuterZ1; marble.vel.z *= -0.6; }
           else { marble.pos.z = wallInnerZ1; marble.vel.z *= -0.6; }
         }
-        // Check collision with back wall (Z = +spacing)
+        // Check collision with back wall (Z = +innerCorner)
         if (marble.pos.z > wallInnerZ2 && marble.pos.z < wallOuterZ2 &&
-            marble.pos.x > -spacing && marble.pos.x < spacing) {
+            marble.pos.x > -innerCorner && marble.pos.x < innerCorner) {
           if (marble.vel.z > 0) { marble.pos.z = wallInnerZ2; marble.vel.z *= -0.6; }
           else { marble.pos.z = wallOuterZ2; marble.vel.z *= -0.6; }
         }
