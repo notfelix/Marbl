@@ -136,6 +136,16 @@
       throw new Error('WebGL2 not supported');
     }
 
+    // Handle WebGL context loss and restoration
+    canvas.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      console.warn('WebGL context lost');
+    });
+    canvas.addEventListener('webglcontextrestored', () => {
+      console.log('WebGL context restored, reloading...');
+      location.reload();
+    });
+
     // ===========================================
     // MarbLD INTEGRATION - External level editor API
     // ===========================================
@@ -155,11 +165,19 @@
         if (typeof reloadWithConfigs === 'function') {
           reloadWithConfigs(externalLevelConfigs, e.data.preserveLevel, e.data.hotReload);
         }
+        // Ensure animation loop is running after reload
+        if (typeof resumeLoop === 'function') {
+          resumeLoop();
+        }
       }
       if (e.data?.type === 'marbl-preview-level') {
         // Jump to a specific level for preview
         if (typeof jumpToLevel === 'function') {
           jumpToLevel(e.data.levelIndex);
+        }
+        // Ensure animation loop is running
+        if (typeof resumeLoop === 'function') {
+          resumeLoop();
         }
       }
     });
@@ -1000,7 +1018,12 @@
         // New wall grid format
         walls = cfg.walls;
         wallHeight = cfg.wallHeight ?? pedestal.height;
-        wallMeshes = createWallGridMeshes(walls, wallHeight);
+        try {
+          wallMeshes = createWallGridMeshes(walls, wallHeight);
+        } catch (e) {
+          console.error('Error creating wall meshes for level', i, e);
+          wallMeshes = [];
+        }
       } else if (cfg.innerWall?.enabled) {
         // Legacy innerWall format
         const innerWall = {
@@ -2138,6 +2161,9 @@
         }
       }
 
+      // Return empty if no geometry was generated
+      if (positions.length === 0) return [];
+
       const geometry = {
         positions: new Float32Array(positions),
         normals: new Float32Array(normals),
@@ -2608,6 +2634,7 @@
     }
 
     function frame(time) {
+      try {
       const now = time * 0.001;
       const delta = now - (frame.last || now);
       const dt = Math.min(0.033, delta);
@@ -2719,8 +2746,8 @@
         const wallColor = palette.wall;
         gl.enable(gl.CULL_FACE);
         for(const w of meshes.walls) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
-        if (level.wallMeshes) {
-          for(const w of level.wallMeshes) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
+        if (level.wallMeshes && Array.isArray(level.wallMeshes)) {
+          for(const w of level.wallMeshes) if (w) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
         }
         gl.disable(gl.CULL_FACE);
         const pedestals = pedestalsForLevel(level);
@@ -2808,13 +2835,18 @@
         const wallColor = palette.wall;
         gl.enable(gl.CULL_FACE);
         for(const w of meshes.walls) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
-        if (level.wallMeshes) {
-          for(const w of level.wallMeshes) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
+        if (level.wallMeshes && Array.isArray(level.wallMeshes)) {
+          for(const w of level.wallMeshes) if (w) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
         }
         gl.disable(gl.CULL_FACE);
       }
 
       if (!paused) rafId = requestAnimationFrame(frame);
+      } catch (err) {
+        console.error('Frame error:', err);
+        // Recover by continuing the animation loop
+        if (!paused) rafId = requestAnimationFrame(frame);
+      }
     }
 
     function setupInput() {
@@ -2872,7 +2904,12 @@
           // New wall grid format
           walls = cfg.walls;
           wallHeight = cfg.wallHeight ?? pedestal.height;
-          wallMeshes = createWallGridMeshes(walls, wallHeight);
+          try {
+            wallMeshes = createWallGridMeshes(walls, wallHeight);
+          } catch (e) {
+            console.error('Error creating wall meshes for level', i, e);
+            wallMeshes = [];
+          }
         } else if (cfg.innerWall?.enabled) {
           // Legacy innerWall format - convert to grid format for collision
           const innerWall = {
@@ -2983,6 +3020,7 @@
     }
 
     function reloadWithConfigs(newConfigs, preserveLevel, hotReload = false) {
+      try {
       // Save state for hot reload
       const savedCollapses = hotReload ? pedestalCollapses.map(c => ({ ...c })) : null;
 
@@ -3041,6 +3079,13 @@
       // Notify parent that reload is complete
       if (isEmbedded) {
         window.parent.postMessage({ type: 'marbl-reloaded' }, '*');
+      }
+      } catch (err) {
+        console.error('Error during reload:', err);
+        // Try to keep the game running
+        if (isEmbedded) {
+          window.parent.postMessage({ type: 'marbl-reloaded' }, '*');
+        }
       }
     }
 
@@ -3111,6 +3156,16 @@
     pushHistory();
     setupInput();
     resumeLoop();
+
+    // Watchdog: ensure animation loop keeps running in embedded mode
+    if (isEmbedded) {
+      setInterval(() => {
+        if (!paused && rafId === null) {
+          console.warn('Animation loop stopped unexpectedly, restarting...');
+          resumeLoop(true);
+        }
+      }, 1000);
+    }
   </script>
 </body>
 </html>
