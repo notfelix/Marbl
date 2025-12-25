@@ -992,6 +992,11 @@
     let currentSupport = null;
     let lastGroundedLevel = null;
     let lastGroundSurfaceHeight = null;
+    let smoothedTiltScale = 1; // Smoothed tilt scale to prevent position pops
+    let smoothedSupportTilt = 1; // Smoothed support tilt for input to prevent plane wobble
+    let smoothedAccelX = 0; // Smoothed horizontal acceleration to prevent position pops
+    let smoothedAccelZ = 0;
+    let smoothedMarbleTilt = 1; // Smoothed marble tilt for rendering
     let paused = false;
     let rafId = null;
 
@@ -1556,18 +1561,33 @@
         .filter(Boolean);
     }
 
-    function isPointInHole(level, x, z) {
+    // Returns hole coverage (0-1) accounting for marble radius for smooth transitions
+    function holeOverlapAt(level, x, z) {
       const holes = holesForLevel(level);
-      if (!holes.length) return false;
+      if (!holes.length) return 0;
+      let maxOverlap = 0;
       for (const hole of holes) {
         const openRadius = hole.radius - (hole.softness ?? 0) * 0.35;
         if (openRadius <= 0) continue;
         const dx = Math.abs(x - hole.center.x);
         const dz = Math.abs(z - hole.center.z);
         const dist = Math.max(dx, dz);
-        if (dist < openRadius) return true;
+        // Transition zone: starts when marble center reaches hole edge, longer transition
+        const innerEdge = openRadius - marble.r * 0.7;
+        const outerEdge = openRadius;
+        if (dist <= innerEdge) {
+          maxOverlap = 1; // Fully in hole
+        } else if (dist < outerEdge) {
+          // Gradual transition as marble tips over edge
+          const overlap = 1 - (dist - innerEdge) / (outerEdge - innerEdge);
+          maxOverlap = Math.max(maxOverlap, overlap);
+        }
       }
-      return false;
+      return maxOverlap;
+    }
+
+    function isPointInHole(level, x, z) {
+      return holeOverlapAt(level, x, z) > 0.99;
     }
 
     function wallHeightAt(level, x, z) {
@@ -1973,11 +1993,26 @@
       if (keys.has('KeyW')) target.y += 1;
       if (keys.has('KeyS')) target.y -= 1;
       if (keys.has('Space')) return; // Freeze input accumulation while rewinding
-      const supportTilt = isAirborne()
-        ? 1 // let the plane still respond to input while falling
+
+      // Calculate target supportTilt, then smooth it to prevent wobble on landing
+      const airborne = isAirborne();
+      const level = currentSupport?.level;
+      let holeOverlap = 0;
+      if (level?.hasHole) holeOverlap = Math.max(holeOverlap, holeOverlapAt(level, marble.pos.x, marble.pos.z));
+      if (lastGroundedLevel?.hasHole && lastGroundedLevel !== level) {
+        holeOverlap = Math.max(holeOverlap, holeOverlapAt(lastGroundedLevel, marble.pos.x, marble.pos.z));
+      }
+      const nearHole = holeOverlap > 0.1;
+      const targetSupportTilt = (airborne || nearHole)
+        ? 1 // let the plane still respond to input while falling or near hole
         : Math.max(0, Math.min(1, currentSupport?.support ?? 0));
-      target.x *= supportTilt;
-      target.y *= supportTilt;
+
+      // Smooth the support tilt to prevent sudden jumps
+      const supportTiltSpeed = 6;
+      smoothedSupportTilt += (targetSupportTilt - smoothedSupportTilt) * Math.min(1, dt * supportTiltSpeed);
+
+      target.x *= smoothedSupportTilt;
+      target.y *= smoothedSupportTilt;
       const len = Math.hypot(target.x, target.y);
       if (len > 1) { target.x /= len; target.y /= len; }
       const smoothing = 12;
@@ -2046,18 +2081,35 @@
       const supportLevel = supportInfo.level;
       const airborne = isAirborne();
 
-      const tiltScale = airborne ? 0 : (0.35 + 0.65 * support);
+      // Fade tilt control near hole edges - check BOTH current and previous level
+      // to prevent discontinuity when transitioning between levels
+      let holeOverlap = 0;
+      if (supportLevel?.hasHole) {
+        holeOverlap = Math.max(holeOverlap, holeOverlapAt(supportLevel, marble.pos.x, marble.pos.z));
+      }
+      if (lastGroundedLevel?.hasHole && lastGroundedLevel !== supportLevel) {
+        holeOverlap = Math.max(holeOverlap, holeOverlapAt(lastGroundedLevel, marble.pos.x, marble.pos.z));
+      }
+      const holeProximityFade = 1 - holeOverlap;
+
+      // Use direct tilt scale for natural physics (no smoothing here - visual smoothing handles the pop)
+      const tiltScale = airborne ? 0 : (0.35 + 0.65 * support) * holeProximityFade;
+
       let ax = -tiltAccel * Math.sin(plane.tilt.x) * tiltScale;
       let az = tiltAccel * Math.sin(plane.tilt.y) * tiltScale;
 
+      // Only calculate slope if not near a hole (avoid -Infinity issues)
       const eps = 2;
-      const left = levelHeightAt(supportLevel, marble.pos.x - eps, marble.pos.z);
-      const right = levelHeightAt(supportLevel, marble.pos.x + eps, marble.pos.z);
-      const forward = levelHeightAt(supportLevel, marble.pos.x, marble.pos.z + eps);
-      const back = levelHeightAt(supportLevel, marble.pos.x, marble.pos.z - eps);
-      const dhdx = (Number.isFinite(right) && Number.isFinite(left)) ? (right - left) / (2 * eps) : 0;
-      const dhdz = (Number.isFinite(forward) && Number.isFinite(back)) ? (forward - back) / (2 * eps) : 0;
-      const slopeScale = pedestal.slopeGravity * support;
+      let dhdx = 0, dhdz = 0;
+      if (holeProximityFade > 0.5) {
+        const left = levelHeightAt(supportLevel, marble.pos.x - eps, marble.pos.z);
+        const right = levelHeightAt(supportLevel, marble.pos.x + eps, marble.pos.z);
+        const forward = levelHeightAt(supportLevel, marble.pos.x, marble.pos.z + eps);
+        const back = levelHeightAt(supportLevel, marble.pos.x, marble.pos.z - eps);
+        dhdx = (Number.isFinite(right) && Number.isFinite(left)) ? (right - left) / (2 * eps) : 0;
+        dhdz = (Number.isFinite(forward) && Number.isFinite(back)) ? (forward - back) / (2 * eps) : 0;
+      }
+      const slopeScale = pedestal.slopeGravity * tiltScale;
       ax += -slopeScale * dhdx;
       az += -slopeScale * dhdz;
 
@@ -2075,12 +2127,15 @@
         }
       }
 
+      // Apply acceleration directly - visual smoothing handles the pop
       marble.vel.x += ax * dt;
       marble.vel.z += az * dt;
 
+      // Smooth friction transition too
       const frictionGround = 0.9975;
       const frictionAir = 0.999;
-      const friction = support > 0.5 ? frictionGround : frictionAir;
+      const frictionBlend = Math.max(0, Math.min(1, support * 2)); // Smooth 0-0.5 range
+      const friction = frictionAir + (frictionGround - frictionAir) * frictionBlend;
       marble.vel.x *= friction;
       marble.vel.z *= friction;
 
@@ -2415,7 +2470,11 @@
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
       const activeLevel = getActiveLevel();
-      const marbleTiltScale = Math.max(0, Math.min(1, currentSupport?.support ?? 0));
+      // Smooth the marble tilt scale for rendering to prevent visual pops
+      const targetMarbleTilt = Math.max(0, Math.min(1, currentSupport?.support ?? 0));
+      const marbleTiltSmoothSpeed = 5;
+      smoothedMarbleTilt += (targetMarbleTilt - smoothedMarbleTilt) * Math.min(1, dt * marbleTiltSmoothSpeed);
+      const marbleTiltScale = smoothedMarbleTilt;
       const fadeDepth = levelDrop * 0.75; // fade out as we fall roughly three quarters of a level
       function isLevelUnlocked(level) {
         if (!level) return false;
