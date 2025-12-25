@@ -24,7 +24,7 @@
       color: var(--text);
       height: 100vh;
       display: grid;
-      grid-template-columns: 1fr 380px;
+      grid-template-columns: 1fr 480px;
       grid-template-rows: auto 1fr;
       gap: 1px;
       overflow: hidden;
@@ -424,20 +424,6 @@
       pointer-events: none;
     }
 
-    /* Preview Panel */
-    .preview-panel {
-      background: var(--panel-bg);
-      display: flex;
-      flex-direction: column;
-      height: 200px;
-      flex-shrink: 0;
-    }
-    #preview-canvas {
-      flex: 1;
-      width: 100%;
-      background: var(--bg);
-    }
-
     /* Game Preview (Left side) */
     .game-preview {
       background: #050915;
@@ -565,12 +551,6 @@
       </div>
     </div>
 
-    <div class="preview-panel">
-      <div class="panel-header">
-        <h2>2D Preview</h2>
-      </div>
-      <canvas id="preview-canvas"></canvas>
-    </div>
   </div>
 
   <input type="file" id="import-file" accept=".json" style="display: none;">
@@ -624,8 +604,6 @@
     // DOM elements
     const levelListEl = document.getElementById('level-list');
     const editorContentEl = document.getElementById('editor-content');
-    const previewCanvas = document.getElementById('preview-canvas');
-    const previewCtx = previewCanvas.getContext('2d');
     const gameIframe = document.getElementById('game-iframe');
     const statusDot = document.getElementById('status-dot');
     const statusText = document.getElementById('status-text');
@@ -782,7 +760,6 @@
         }
         renderLevelList();
         renderEditor();
-        renderPreview();
       }
     }
 
@@ -798,7 +775,6 @@
       selectedLevelIndex = index;
       renderLevelList();
       renderEditor();
-      renderPreview();
 
       // Jump to level in game preview
       if (gameConnected) {
@@ -951,8 +927,7 @@
           }
           renderEditor();
           renderLevelList();
-          renderPreview();
-          applyToGame();
+            applyToGame();
         });
       });
 
@@ -962,7 +937,6 @@
         level.orbs.push({ type: 'random', wild: false });
         renderEditor();
         renderLevelList();
-        renderPreview();
         applyToGame();
       });
 
@@ -974,8 +948,7 @@
           level.orbs.splice(idx, 1);
           renderEditor();
           renderLevelList();
-          renderPreview();
-          applyToGame();
+            applyToGame();
         });
       });
 
@@ -991,8 +964,7 @@
             level.orbs[idx].z = level.orbs[idx].z ?? 0;
           }
           renderEditor();
-          renderPreview();
-          applyToGame();
+            applyToGame();
         });
       });
 
@@ -1001,8 +973,7 @@
         input.addEventListener('change', () => {
           const idx = parseInt(input.dataset.orbIndex);
           level.orbs[idx].x = parseFloat(input.value) || 0;
-          renderPreview();
-          applyToGame();
+            applyToGame();
         });
       });
 
@@ -1011,8 +982,7 @@
         input.addEventListener('change', () => {
           const idx = parseInt(input.dataset.orbIndex);
           level.orbs[idx].z = parseFloat(input.value) || 0;
-          renderPreview();
-          applyToGame();
+            applyToGame();
         });
       });
 
@@ -1021,8 +991,7 @@
         checkbox.addEventListener('change', () => {
           const idx = parseInt(checkbox.dataset.orbIndex);
           level.orbs[idx].wild = checkbox.checked;
-          renderPreview();
-          applyToGame();
+            applyToGame();
         });
       });
 
@@ -1032,7 +1001,6 @@
         level.colors = generateHarmoniousColors(hue);
         renderEditor();
         renderLevelList();
-        renderPreview();
         applyToGame();
       });
 
@@ -1046,8 +1014,7 @@
             level.colors[key] = hexToRgb(picker.value);
             renderEditor();
             renderLevelList();
-            renderPreview();
-            applyToGame();
+                applyToGame();
           };
           picker.click();
         });
@@ -1059,8 +1026,7 @@
           level.colors[key] = hexToRgb(input.value);
           renderEditor();
           renderLevelList();
-          renderPreview();
-          applyToGame();
+            applyToGame();
         });
       });
 
@@ -1072,19 +1038,16 @@
           level.innerWall = null;
         }
         renderEditor();
-        renderPreview();
         applyToGame();
       });
 
       document.getElementById('inner-wall-position')?.addEventListener('change', (e) => {
         if (level.innerWall) level.innerWall.position = parseFloat(e.target.value) || 200;
-        renderPreview();
         applyToGame();
       });
 
       document.getElementById('inner-wall-half-width')?.addEventListener('change', (e) => {
         if (level.innerWall) level.innerWall.halfWidth = parseFloat(e.target.value) || 40;
-        renderPreview();
         applyToGame();
       });
 
@@ -1092,164 +1055,6 @@
         if (level.innerWall) level.innerWall.height = parseFloat(e.target.value) || 60;
         applyToGame();
       });
-    }
-
-    // ===========================================
-    // 2D Preview
-    // ===========================================
-    function renderPreview() {
-      const rect = previewCanvas.getBoundingClientRect();
-      previewCanvas.width = rect.width * window.devicePixelRatio;
-      previewCanvas.height = rect.height * window.devicePixelRatio;
-      previewCtx.scale(window.devicePixelRatio, window.devicePixelRatio);
-
-      const w = rect.width;
-      const h = rect.height;
-      const size = Math.min(w, h) - 40;
-      const cx = w / 2;
-      const cy = h / 2;
-
-      // Clear
-      previewCtx.fillStyle = '#0a0f1a';
-      previewCtx.fillRect(0, 0, w, h);
-
-      if (selectedLevelIndex < 0 || selectedLevelIndex >= levels.length) return;
-
-      const level = levels[selectedLevelIndex];
-      const scale = size / 920; // Game plane is 920 units
-
-      // Draw floor
-      const floorColor = rgbToHex(...level.colors.floor);
-      previewCtx.fillStyle = floorColor;
-      previewCtx.fillRect(cx - size/2, cy - size/2, size, size);
-
-      // Draw walls (border)
-      const wallColor = rgbToHex(...level.colors.wall);
-      previewCtx.strokeStyle = wallColor;
-      previewCtx.lineWidth = 8 * scale;
-      previewCtx.strokeRect(cx - size/2, cy - size/2, size, size);
-
-      // Draw inner walls if enabled
-      // In game: walls at X=±p (top/bottom) and Z=±p (left/right)
-      // Canvas: coordinates are negated
-      if (level.innerWall?.enabled) {
-        const p = level.innerWall.position * scale;
-        const t = level.innerWall.halfWidth * scale;
-        previewCtx.strokeStyle = wallColor;
-        previewCtx.lineWidth = t * 2;
-
-        // Draw the four inner wall segments (negated coords)
-        previewCtx.beginPath();
-        // Top wall (game X = -p → canvas y = +p)
-        previewCtx.moveTo(cx - size/2, cy + p);
-        previewCtx.lineTo(cx + size/2, cy + p);
-        // Bottom wall (game X = +p → canvas y = -p)
-        previewCtx.moveTo(cx - size/2, cy - p);
-        previewCtx.lineTo(cx + size/2, cy - p);
-        // Left wall (game Z = -p → canvas x = +p)
-        previewCtx.moveTo(cx + p, cy - size/2);
-        previewCtx.lineTo(cx + p, cy + size/2);
-        // Right wall (game Z = +p → canvas x = -p)
-        previewCtx.moveTo(cx - p, cy - size/2);
-        previewCtx.lineTo(cx - p, cy + size/2);
-        previewCtx.stroke();
-      }
-
-      // Draw pedestals (3x3 grid)
-      const pedestalColor = rgbToHex(...level.colors.pedestal);
-      const spacing = 300 * scale; // pedestalGrid.spacing = 300
-      const pedestalSize = 100 * scale;
-
-      // Grid positions (matching game's pedestalReferencePositions)
-      // In game: X = vertical (neg=top, pos=bottom), Z = horizontal (neg=left, pos=right)
-      const gridPositions = [
-        { x: -spacing, z: -spacing }, // 0: top-left
-        { x: -spacing, z: 0 },        // 1: top-center
-        { x: -spacing, z: spacing },  // 2: top-right
-        { x: 0, z: -spacing },        // 3: center-left
-        { x: 0, z: 0 },               // 4: center
-        { x: 0, z: spacing },         // 5: center-right
-        { x: spacing, z: -spacing },  // 6: bottom-left
-        { x: spacing, z: 0 },         // 7: bottom-center
-        { x: spacing, z: spacing }    // 8: bottom-right
-      ];
-
-      level.pedestals.forEach(idx => {
-        const pos = gridPositions[idx];
-        if (!pos) return;
-        // Map game coords to canvas: Z→horizontal (negated), X→vertical (negated)
-        const px = cx - pos.z;
-        const py = cy - pos.x;
-
-        previewCtx.fillStyle = pedestalColor;
-        previewCtx.beginPath();
-        previewCtx.arc(px, py, pedestalSize / 2, 0, Math.PI * 2);
-        previewCtx.fill();
-      });
-
-      // Draw central hole if level has pedestals
-      if (level.pedestals.length > 0) {
-        const holeRadius = 90 * scale;
-        previewCtx.fillStyle = '#050915';
-        previewCtx.beginPath();
-        previewCtx.arc(cx, cy, holeRadius, 0, Math.PI * 2);
-        previewCtx.fill();
-        previewCtx.strokeStyle = '#333';
-        previewCtx.lineWidth = 2;
-        previewCtx.stroke();
-      }
-
-      // Draw orbs from the orbs array
-      const orbs = level.orbs || [];
-      const fixedOrbs = orbs.filter(o => o.type === 'fixed');
-      const randomOrbs = orbs.filter(o => o.type === 'random');
-      const orbRadius = 12 * scale;
-
-      // Draw fixed orbs
-      fixedOrbs.forEach(orb => {
-        // Map game coords to canvas: Z→horizontal (negated), X→vertical (negated)
-        const orbX = cx - (orb.z ?? 0) * scale;
-        const orbY = cy - (orb.x ?? 250) * scale;
-
-        previewCtx.fillStyle = orb.wild ? '#fbbf24' : '#60a5fa';
-        previewCtx.beginPath();
-        previewCtx.arc(orbX, orbY, orbRadius, 0, Math.PI * 2);
-        previewCtx.fill();
-        previewCtx.strokeStyle = '#fff';
-        previewCtx.lineWidth = 2;
-        previewCtx.stroke();
-      });
-
-      // Draw random orb spawn indicator
-      if (randomOrbs.length > 0) {
-        previewCtx.strokeStyle = 'rgba(96, 165, 250, 0.3)';
-        previewCtx.setLineDash([5, 5]);
-        previewCtx.lineWidth = 2;
-        const minDist = 220 * scale;
-        previewCtx.beginPath();
-        previewCtx.arc(cx, cy, minDist, 0, Math.PI * 2);
-        previewCtx.stroke();
-        previewCtx.setLineDash([]);
-
-        const wildCount = randomOrbs.filter(o => o.wild).length;
-        const normalCount = randomOrbs.length - wildCount;
-        let label = `${randomOrbs.length} random`;
-        if (wildCount > 0 && normalCount > 0) {
-          label = `${normalCount} random + ${wildCount} wild`;
-        } else if (wildCount > 0) {
-          label = `${wildCount} wild random`;
-        }
-        previewCtx.fillStyle = 'rgba(96, 165, 250, 0.5)';
-        previewCtx.font = '11px sans-serif';
-        previewCtx.textAlign = 'center';
-        previewCtx.fillText(label, cx, cy + minDist + 15);
-      }
-
-      // Level number label
-      previewCtx.fillStyle = 'rgba(255,255,255,0.7)';
-      previewCtx.font = 'bold 14px sans-serif';
-      previewCtx.textAlign = 'left';
-      previewCtx.fillText(`Level ${selectedLevelIndex}`, 15, 25);
     }
 
     // ===========================================
@@ -1322,7 +1127,6 @@
       selectedLevelIndex = Math.min(selectedLevelIndex, levels.length - 1);
       renderLevelList();
       renderEditor();
-      renderPreview();
       applyToGame();
     });
 
@@ -1371,14 +1175,8 @@
 
     // ===========================================
     // Initialization
-    // ===========================================
-    window.addEventListener('resize', () => {
-      renderPreview();
-    });
-
     // Initial render with empty state
     renderLevelList();
-    renderPreview();
 
     // Wait a bit for iframe to load, then try to connect
     setTimeout(() => {
