@@ -1186,7 +1186,7 @@
 
         // Block rewind if it would cross a closed pedestal opening
         if (nextState && wouldCrossClosedPedestal(nextState)) {
-          return;
+          return true; // blocked
         }
 
         history.pop(); // discard current
@@ -1210,6 +1210,7 @@
         reverseStarVelocities();
         starsReversed = true;
       }
+      return false; // not blocked
     }
 
     function stopLoop() {
@@ -2137,18 +2138,18 @@
 
       const rewinding = keys.has('Space');
       if (rewinding) {
-        rewindStep();
+        const rewindBlocked = rewindStep();
         refreshSupport();
         // Update collapses during rewind so pedestals can close when orb count drops
         updateCollapses(dt);
-        // Only update wild orbs and animation if there's still history to rewind
-        if (history.length > 1) {
+        // Only update wild orbs and animation if there's still history to rewind and not blocked
+        if (history.length > 1 && !rewindBlocked) {
           updateWildOrbs(dt);
           orbAnimTime += delta; // Keep animation time advancing for wild orb rainbow effect
         }
         // When star history is exhausted, keep stars moving with reversed velocities
-        // But freeze everything when main history hits zero
-        if (starsReversed && history.length > 1) {
+        // But freeze everything when main history hits zero or rewind is blocked
+        if (starsReversed && history.length > 1 && !rewindBlocked) {
           updateStars(dt);
         }
       } else {
