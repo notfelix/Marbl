@@ -96,7 +96,8 @@
       'rgb(18, 71, 179)',   // Level 0 blue
       'rgb(199, 82, 87)',   // Level 1 red
       'rgb(46, 148, 82)',   // Level 2 green
-      'rgb(140, 89, 166)'   // Level 3 purple
+      'rgb(140, 89, 166)',  // Level 3 purple
+      'rgb(204, 136, 51)'   // Level 4 gold
     ];
 
     function updateRewindBar() {
@@ -872,14 +873,14 @@
         wild: false
       },
       {
-        // Level 4 - New final level (no pedestals)
+        // Level 4 - Gold final level (no pedestals)
         hasHole: false,
         pedestals: [],
         colors: {
-          floor: [0.4, 0.4, 0.45],
-          wall: [0.35, 0.35, 0.4],
-          pedestal: [0.5, 0.5, 0.55],
-          pedestalHole: [0.3, 0.3, 0.35]
+          floor: [0.75, 0.5, 0.15],
+          wall: [0.65, 0.43, 0.12],
+          pedestal: [0.85, 0.57, 0.18],
+          pedestalHole: [0.55, 0.36, 0.1]
         },
         orbCount: 0,
         orbsToCollapse: null, // final level
