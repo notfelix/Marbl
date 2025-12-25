@@ -153,7 +153,7 @@
       if (e.data?.type === 'marbl-load-levels') {
         externalLevelConfigs = e.data.levels;
         if (typeof reloadWithConfigs === 'function') {
-          reloadWithConfigs(externalLevelConfigs, e.data.preserveLevel);
+          reloadWithConfigs(externalLevelConfigs, e.data.preserveLevel, e.data.hotReload);
         }
       }
       if (e.data?.type === 'marbl-preview-level') {
@@ -2982,10 +2982,32 @@
       pushHistory();
     }
 
-    function reloadWithConfigs(newConfigs, preserveLevel) {
+    function reloadWithConfigs(newConfigs, preserveLevel, hotReload = false) {
+      // Save state for hot reload
+      const savedCollapses = hotReload ? pedestalCollapses.map(c => ({ ...c })) : null;
+
       levelConfigs = newConfigs;
       rebuildDerivedArrays();
-      // Always respawn orbs with updated config
+
+      if (hotReload) {
+        // Restore collapse states
+        for (const saved of savedCollapses) {
+          const current = pedestalCollapses.find(c => c.levelIndex === saved.levelIndex);
+          if (current) {
+            current.started = saved.started;
+            current.progress = saved.progress;
+          }
+        }
+        // Just refresh support without moving marble
+        refreshSupport();
+        // Notify parent that reload is complete
+        if (isEmbedded) {
+          window.parent.postMessage({ type: 'marbl-reloaded' }, '*');
+        }
+        return;
+      }
+
+      // Full reload - respawn orbs and reset state
       orbs.length = 0;
       for (let i = 0; i < levels.length; i++) {
         spawnOrbsForLevel(i);

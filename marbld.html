@@ -1302,7 +1302,7 @@
       gameIframe.contentWindow.postMessage({
         type: 'marbl-load-levels',
         levels: JSON.parse(JSON.stringify(levels)),
-        preserveLevel: selectedLevelIndex // Tell game to jump back to this level
+        hotReload: true // Preserve game state (marble position, orbs, etc.)
       }, '*');
     }
 
