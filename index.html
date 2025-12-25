@@ -123,8 +123,35 @@
       throw new Error('WebGL2 not supported');
     }
 
+    // ===========================================
+    // MarbLD INTEGRATION - External level editor API
+    // ===========================================
+    let externalLevelConfigs = null;
+    const isEmbedded = window.parent !== window;
+
+    // Notify parent when ready
+    if (isEmbedded) {
+      window.parent.postMessage({ type: 'marbl-ready' }, '*');
+    }
+
+    // Listen for level config updates from MarbLD editor
+    window.addEventListener('message', (e) => {
+      if (e.data?.type === 'marbl-load-levels') {
+        externalLevelConfigs = e.data.levels;
+        if (typeof reloadWithConfigs === 'function') {
+          reloadWithConfigs(externalLevelConfigs, e.data.preserveLevel);
+        }
+      }
+      if (e.data?.type === 'marbl-preview-level') {
+        // Jump to a specific level for preview
+        if (typeof jumpToLevel === 'function') {
+          jumpToLevel(e.data.levelIndex);
+        }
+      }
+    });
+
     const rewindBarContainer = document.getElementById('rewind-bar-container');
-    const levelColorsCSS = [
+    let levelColorsCSS = [
       'rgb(18, 71, 179)',   // Level 0 blue
       'rgb(199, 82, 87)',   // Level 1 red
       'rgb(46, 148, 82)',   // Level 2 green
@@ -848,7 +875,7 @@
     // ===========================================
     // LEVEL CONFIGURATION - Add new levels here!
     // ===========================================
-    const levelConfigs = [
+    let levelConfigs = [
       {
         // Level 0 - Blue
         hasHole: true,
@@ -918,7 +945,8 @@
         orbCount: 1,
         orbsToCollapse: 4,
         wild: false,
-        fixedOrb: { x: 0, z: 0, wild: true } // wild orb in the center
+        fixedOrb: { x: 0, z: 0, wild: true }, // wild orb in the center
+        innerWall: { enabled: true, position: null, halfWidth: null, height: null } // uses default calculated values
       },
       {
         // Level 5 - Cyan/Teal final level (blank)
@@ -936,21 +964,39 @@
       }
     ];
 
+    // Default inner wall dimensions (calculated from game geometry)
+    const defaultInnerWall = {
+      position: pedestalGrid.spacing - pedestalFootprint - pedestal.topSize / 2,
+      halfWidth: pedestal.topSize / 2,
+      height: pedestal.height
+    };
+
     // Derived arrays (for compatibility with existing code)
-    const levels = levelConfigs.map((cfg, i) => {
+    let levels = levelConfigs.map((cfg, i) => {
       const layout = cfg.pedestals.filter(idx => idx >= 0);
+      // Build innerWall config with defaults for null values
+      let innerWall = null;
+      if (cfg.innerWall?.enabled) {
+        innerWall = {
+          position: cfg.innerWall.position ?? defaultInnerWall.position,
+          halfWidth: cfg.innerWall.halfWidth ?? defaultInnerWall.halfWidth,
+          height: cfg.innerWall.height ?? defaultInnerWall.height
+        };
+      }
       return {
         y: -levelDrop * i,
-        hasHole: cfg.hasHole,
+        hasHole: layout.length > 0, // Hole exists if level has pedestals
         index: i,
         pedestalIndices: layout,
-        pedestals: layout.map(idx => pedestalReferencePositions[idx]).filter(Boolean)
+        pedestals: layout.map(idx => pedestalReferencePositions[idx]).filter(Boolean),
+        innerWall
       };
     });
-    const pedestalLayouts = levelConfigs.map(cfg => cfg.pedestals.filter(idx => idx >= 0));
-    const boardColors = levelConfigs.map(cfg => cfg.colors);
-    const pedestalCollapses = levelConfigs
-      .map((cfg, i) => cfg.orbsToCollapse !== null ? {
+    let pedestalLayouts = levelConfigs.map(cfg => cfg.pedestals.filter(idx => idx >= 0));
+    let boardColors = levelConfigs.map(cfg => cfg.colors);
+    // A level collapses if it has pedestals; orbs needed = number of pedestals
+    let pedestalCollapses = levelConfigs
+      .map((cfg, i) => pedestalLayouts[i].length > 0 ? {
         levelIndex: i,
         pedestals: pedestalLayouts[i],
         started: false,
@@ -959,9 +1005,9 @@
         exactOrbs: cfg.exactOrbs ?? !cfg.wild
       } : null)
       .filter(Boolean);
-    const orbsRequiredForCollapse = levelConfigs
-      .filter(cfg => cfg.orbsToCollapse !== null)
-      .map(cfg => cfg.orbsToCollapse);
+    let orbsRequiredForCollapse = pedestalLayouts
+      .filter(layout => layout.length > 0)
+      .map(layout => layout.length);
 
     const mouseAttractor = {
       active: false,
@@ -970,7 +1016,6 @@
     };
     const orbConfig = {
       r: 12,
-      countPerLevel: levelConfigs.map(cfg => cfg.orbCount),
       minCenterDistance: 220,
       touchRadius: 22,
       satelliteCount: 1
@@ -1607,11 +1652,11 @@
       // Right wall: x from w-m to w+t
       if (x >= w - m && x <= w + t && z >= -hl + m && z <= hl - m) return h;
 
-      // Inner walls (level 4 only)
-      if (level.index === 4) {
-        const p = innerWall.position;
-        const iw = innerWall.halfWidth;
-        const ih = innerWall.height;
+      // Inner walls (per-level configuration)
+      if (level.innerWall) {
+        const p = level.innerWall.position;
+        const iw = level.innerWall.halfWidth;
+        const ih = level.innerWall.height;
         const im = marble.r * 0.5; // inner wall margin
         // Top wall (X = -p)
         if (x >= -p - iw - im && x <= -p + iw + im && z >= -p - iw && z <= p + iw) return ih;
@@ -1846,13 +1891,43 @@
           wild: isWild
         });
       }
-      // Handle fixed orb position if specified
+
+      // New format: orbs array with type/position/wild per orb
+      if (levelCfg.orbs && Array.isArray(levelCfg.orbs)) {
+        for (const orbCfg of levelCfg.orbs) {
+          if (orbCfg.type === 'fixed') {
+            // Default x to 250 (outside center guard of 220) if not specified
+            createOrb({ x: orbCfg.x ?? 250, z: orbCfg.z ?? 0 }, orbCfg.wild || false);
+          } else {
+            // Random positioning
+            let attempts = 0;
+            while (attempts < 100) {
+              attempts++;
+              const p = randomPos();
+              if (Math.hypot(p.x, p.z) < centerGuard) continue;
+              let ok = true;
+              for (const o of orbs) {
+                const dx = o.pos.x - p.x;
+                const dz = o.pos.z - p.z;
+                if (Math.hypot(dx, dz) < (orbConfig.r * 2 + 30)) { ok = false; break; }
+              }
+              if (ok) {
+                createOrb(p, orbCfg.wild || false);
+                break;
+              }
+            }
+          }
+        }
+        return;
+      }
+
+      // Legacy format: fixedOrb and orbCount
       if (levelCfg.fixedOrb) {
         createOrb({ x: levelCfg.fixedOrb.x, z: levelCfg.fixedOrb.z }, levelCfg.fixedOrb.wild);
-        return; // Fixed orb levels only have the fixed orb
+        return;
       }
       const countForLevel = () => orbs.filter(o => o.level === levelIndex).length;
-      const targetCount = orbConfig.countPerLevel?.[levelIndex] ?? 0;
+      const targetCount = levelCfg.orbCount ?? 0;
       while (countForLevel() < targetCount) {
         const p = randomPos();
         if (Math.hypot(p.x, p.z) < centerGuard) continue;
@@ -1863,20 +1938,10 @@
           if (Math.hypot(dx, dz) < (orbConfig.r * 2 + 30)) { ok = false; break; }
         }
         if (ok) {
-          // Determine if this orb should be wild (level 2, second orb = index 1 within level)
-          const orbIndexInLevel = countForLevel();
-          const isWild = (levelIndex === 2 && orbIndexInLevel === 1);
-          createOrb(p, isWild);
+          createOrb(p, false);
         }
       }
     }
-
-    // Inner wall configuration for level 4 (used by both mesh creation and collision)
-    const innerWall = {
-      position: pedestalGrid.spacing - pedestalFootprint - pedestal.topSize / 2,
-      halfWidth: pedestal.topSize / 2,
-      height: pedestal.height
-    };
 
     // Geometry instances
     const meshes = {
@@ -1960,10 +2025,11 @@
       return [createMesh(frame)];
     }
 
-    function createInnerWallMeshes(){
-      const p = innerWall.position;
-      const t = innerWall.halfWidth;
-      const h = innerWall.height;
+    function createInnerWallMeshes(innerWall = null){
+      const cfg = innerWall || defaultInnerWall;
+      const p = cfg.position;
+      const t = cfg.halfWidth;
+      const h = cfg.height;
       // Single unified inner wall frame mesh
       const outerSize = (p + t) * 2;
       const innerSize = (p - t) * 2;
@@ -2183,38 +2249,40 @@
         if (marble.pos.z > outerMaxZ) { marble.pos.z = outerMaxZ; marble.vel.z *= -0.6; }
       }
 
-      // Inner wall collision for level 4 (only when grounded on level 4, not falling through)
+      // Inner wall collision (for levels with inner walls configured)
       // Skip collision if marble is on top of the inner wall
-      const level4FloorY = levels[4]?.y || 0;
-      const onInnerWallTop = marble.y > level4FloorY + marble.r + innerWall.height * 0.5;
-      if (landingSupport?.level?.index === 4 && landingSupport.support > 0.5 && !onInnerWallTop) {
-        const p = innerWall.position;
-        const t = innerWall.halfWidth;
-        const r = marble.r;
-        const outer1 = -p - t - r;  // outer edge of negative wall
-        const inner1 = -p + t + r;  // inner edge of negative wall
-        const inner2 = p - t - r;   // inner edge of positive wall
-        const outer2 = p + t + r;   // outer edge of positive wall
+      if (currentLevel?.innerWall && landingSupport.support > 0.5) {
+        const iw = currentLevel.innerWall;
+        const onInnerWallTop = marble.y > currentLevel.y + marble.r + iw.height * 0.5;
+        if (!onInnerWallTop) {
+          const p = iw.position;
+          const t = iw.halfWidth;
+          const r = marble.r;
+          const outer1 = -p - t - r;  // outer edge of negative wall
+          const inner1 = -p + t + r;  // inner edge of negative wall
+          const inner2 = p - t - r;   // inner edge of positive wall
+          const outer2 = p + t + r;   // outer edge of positive wall
 
-        // Check collision with left wall (X = -p)
-        if (marble.pos.x > outer1 && marble.pos.x < inner1 && marble.pos.z > -p && marble.pos.z < p) {
-          if (marble.vel.x > 0) { marble.pos.x = outer1; marble.vel.x *= -0.6; }
-          else { marble.pos.x = inner1; marble.vel.x *= -0.6; }
-        }
-        // Check collision with right wall (X = +p)
-        if (marble.pos.x > inner2 && marble.pos.x < outer2 && marble.pos.z > -p && marble.pos.z < p) {
-          if (marble.vel.x > 0) { marble.pos.x = inner2; marble.vel.x *= -0.6; }
-          else { marble.pos.x = outer2; marble.vel.x *= -0.6; }
-        }
-        // Check collision with front wall (Z = -p)
-        if (marble.pos.z > outer1 && marble.pos.z < inner1 && marble.pos.x > -p && marble.pos.x < p) {
-          if (marble.vel.z > 0) { marble.pos.z = outer1; marble.vel.z *= -0.6; }
-          else { marble.pos.z = inner1; marble.vel.z *= -0.6; }
-        }
-        // Check collision with back wall (Z = +p)
-        if (marble.pos.z > inner2 && marble.pos.z < outer2 && marble.pos.x > -p && marble.pos.x < p) {
-          if (marble.vel.z > 0) { marble.pos.z = inner2; marble.vel.z *= -0.6; }
-          else { marble.pos.z = outer2; marble.vel.z *= -0.6; }
+          // Check collision with left wall (X = -p)
+          if (marble.pos.x > outer1 && marble.pos.x < inner1 && marble.pos.z > -p && marble.pos.z < p) {
+            if (marble.vel.x > 0) { marble.pos.x = outer1; marble.vel.x *= -0.6; }
+            else { marble.pos.x = inner1; marble.vel.x *= -0.6; }
+          }
+          // Check collision with right wall (X = +p)
+          if (marble.pos.x > inner2 && marble.pos.x < outer2 && marble.pos.z > -p && marble.pos.z < p) {
+            if (marble.vel.x > 0) { marble.pos.x = inner2; marble.vel.x *= -0.6; }
+            else { marble.pos.x = outer2; marble.vel.x *= -0.6; }
+          }
+          // Check collision with front wall (Z = -p)
+          if (marble.pos.z > outer1 && marble.pos.z < inner1 && marble.pos.x > -p && marble.pos.x < p) {
+            if (marble.vel.z > 0) { marble.pos.z = outer1; marble.vel.z *= -0.6; }
+            else { marble.pos.z = inner1; marble.vel.z *= -0.6; }
+          }
+          // Check collision with back wall (Z = +p)
+          if (marble.pos.z > inner2 && marble.pos.z < outer2 && marble.pos.x > -p && marble.pos.x < p) {
+            if (marble.vel.z > 0) { marble.pos.z = inner2; marble.vel.z *= -0.6; }
+            else { marble.pos.z = outer2; marble.vel.z *= -0.6; }
+          }
         }
       }
 
@@ -2526,8 +2594,9 @@
         const wallColor = palette.wall;
         gl.enable(gl.CULL_FACE);
         for(const w of meshes.walls) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
-        if (level.index === 4) {
-          for(const w of meshes.innerWalls) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
+        if (level.innerWall) {
+          const iwMeshes = level.innerWallMesh || meshes.innerWalls;
+          for(const w of iwMeshes) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
         }
         gl.disable(gl.CULL_FACE);
         const pedestals = pedestalsForLevel(level);
@@ -2615,8 +2684,9 @@
         const wallColor = palette.wall;
         gl.enable(gl.CULL_FACE);
         for(const w of meshes.walls) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
-        if (level.index === 4) {
-          for(const w of meshes.innerWalls) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
+        if (level.innerWall) {
+          const iwMeshes = level.innerWallMesh || meshes.innerWalls;
+          for(const w of iwMeshes) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
         }
         gl.disable(gl.CULL_FACE);
       }
@@ -2663,13 +2733,191 @@
       canvas.addEventListener('pointerleave', () => { mouseAttractor.active = false; });
     }
 
+    // ===========================================
+    // MarbLD INTEGRATION - Reload and navigation functions
+    // ===========================================
+    function rebuildDerivedArrays() {
+      levels = levelConfigs.map((cfg, i) => {
+        const layout = cfg.pedestals.filter(idx => idx >= 0);
+        // Build innerWall config with defaults for null values
+        let innerWall = null;
+        let innerWallMesh = null;
+        if (cfg.innerWall?.enabled) {
+          innerWall = {
+            position: cfg.innerWall.position ?? defaultInnerWall.position,
+            halfWidth: cfg.innerWall.halfWidth ?? defaultInnerWall.halfWidth,
+            height: cfg.innerWall.height ?? defaultInnerWall.height
+          };
+          // Create per-level inner wall mesh with specific dimensions
+          innerWallMesh = createInnerWallMeshes(innerWall);
+        }
+        return {
+          y: -levelDrop * i,
+          hasHole: layout.length > 0, // Hole exists if level has pedestals
+          index: i,
+          pedestalIndices: layout,
+          pedestals: layout.map(idx => pedestalReferencePositions[idx]).filter(Boolean),
+          innerWall,
+          innerWallMesh
+        };
+      });
+      pedestalLayouts = levelConfigs.map(cfg => cfg.pedestals.filter(idx => idx >= 0));
+      boardColors = levelConfigs.map(cfg => cfg.colors);
+      // A level collapses if it has pedestals; orbs needed = number of pedestals
+      pedestalCollapses = levelConfigs
+        .map((cfg, i) => pedestalLayouts[i].length > 0 ? {
+          levelIndex: i,
+          pedestals: pedestalLayouts[i],
+          started: false,
+          progress: 0,
+          wild: cfg.wild,
+          exactOrbs: cfg.exactOrbs ?? !cfg.wild
+        } : null)
+        .filter(Boolean);
+      orbsRequiredForCollapse = pedestalLayouts
+        .filter(layout => layout.length > 0)
+        .map(layout => layout.length);
+      // Update CSS colors for rewind bar
+      levelColorsCSS = levelConfigs.map(cfg => {
+        const c = cfg.colors.floor;
+        return `rgb(${Math.round(c[0]*255)}, ${Math.round(c[1]*255)}, ${Math.round(c[2]*255)})`;
+      });
+    }
+
+    function resetGameState() {
+      // Reset marble - place at a safe starting position
+      marble.pos.x = 0;
+      marble.pos.z = 0;
+      marble.vel.x = 0;
+      marble.vel.y = 0;
+      marble.vel.z = 0;
+      // Find a valid starting height (avoid hole at center)
+      const level0 = levels[0];
+      let startHeight = level0.y;
+      // Try center first, if it's a hole, try offset positions
+      const testPositions = [[0, 0], [150, 0], [-150, 0], [0, 150], [0, -150]];
+      for (const [tx, tz] of testPositions) {
+        const h = levelHeightAt(level0, tx, tz);
+        if (Number.isFinite(h)) {
+          startHeight = h;
+          marble.pos.x = tx;
+          marble.pos.z = tz;
+          break;
+        }
+      }
+      marble.y = startHeight + marble.r;
+
+      // Clear orbs and respawn
+      orbs.length = 0;
+      for (let i = 0; i < levels.length; i++) {
+        spawnOrbsForLevel(i);
+      }
+
+      // Reset collapse states
+      for (const collapse of pedestalCollapses) {
+        collapse.started = false;
+        collapse.progress = 0;
+      }
+
+      // Clear history
+      history.length = 0;
+      starHistory.length = 0;
+      starsReversed = false;
+      rewindAccumulator = 0;
+
+      // Reset support tracking
+      currentSupport = null;
+      lastGroundedLevel = null;
+      lastGroundSurfaceHeight = null;
+
+      refreshSupport();
+      pushHistory();
+    }
+
+    function reloadWithConfigs(newConfigs, preserveLevel) {
+      levelConfigs = newConfigs;
+      rebuildDerivedArrays();
+      // Always respawn orbs with updated config
+      orbs.length = 0;
+      for (let i = 0; i < levels.length; i++) {
+        spawnOrbsForLevel(i);
+      }
+      // If preserveLevel is specified, jump to that level instead of resetting to 0
+      if (typeof preserveLevel === 'number' && preserveLevel >= 0 && preserveLevel < levels.length) {
+        jumpToLevel(preserveLevel);
+      } else {
+        resetGameState();
+      }
+      // Notify parent that reload is complete
+      if (isEmbedded) {
+        window.parent.postMessage({ type: 'marbl-reloaded' }, '*');
+      }
+    }
+
+    function jumpToLevel(levelIndex) {
+      if (levelIndex < 0 || levelIndex >= levels.length) return;
+      const level = levels[levelIndex];
+      // Reset marble position on target level - find safe starting spot
+      marble.pos.x = 0;
+      marble.pos.z = 0;
+      marble.vel.x = 0;
+      marble.vel.y = 0;
+      marble.vel.z = 0;
+      // Find a valid starting height (avoid hole at center)
+      let startHeight = level.y;
+      const testPositions = [[0, 0], [150, 0], [-150, 0], [0, 150], [0, -150]];
+      for (const [tx, tz] of testPositions) {
+        const h = levelHeightAt(level, tx, tz);
+        if (Number.isFinite(h)) {
+          startHeight = h;
+          marble.pos.x = tx;
+          marble.pos.z = tz;
+          break;
+        }
+      }
+      marble.y = startHeight + marble.r;
+      // Collapse all levels above
+      for (let i = 0; i < levelIndex; i++) {
+        const collapse = collapseStateFor(i);
+        if (collapse) {
+          collapse.started = true;
+          collapse.progress = 1;
+        }
+      }
+      // Make sure current level's collapse is reset
+      const currentCollapse = collapseStateFor(levelIndex);
+      if (currentCollapse) {
+        currentCollapse.started = false;
+        currentCollapse.progress = 0;
+      }
+      refreshSupport();
+      history.length = 0;
+      pushHistory();
+      // Notify parent
+      if (isEmbedded) {
+        window.parent.postMessage({ type: 'marbl-jumped', levelIndex }, '*');
+      }
+    }
+
+    // Export current configs for MarbLD
+    function exportLevelConfigs() {
+      return JSON.parse(JSON.stringify(levelConfigs));
+    }
+
+    // Expose API for embedded use
+    window.marblAPI = {
+      reloadWithConfigs,
+      jumpToLevel,
+      exportLevelConfigs,
+      getLevelConfigs: () => levelConfigs
+    };
+
+    // Initial setup
     marble.y = levelHeightAt(levels[0], marble.pos.x, marble.pos.z) + marble.r;
     refreshSupport();
-    spawnOrbsForLevel(0);
-    spawnOrbsForLevel(1);
-    spawnOrbsForLevel(2);
-    spawnOrbsForLevel(3);
-    spawnOrbsForLevel(4);
+    for (let i = 0; i < levels.length; i++) {
+      spawnOrbsForLevel(i);
+    }
     pushHistory();
     setupInput();
     resumeLoop();

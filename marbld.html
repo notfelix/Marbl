@@ -1,0 +1,1391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MarbLD - Level Designer</title>
+  <style>
+    :root {
+      --bg: #0a0f1a;
+      --panel-bg: #111827;
+      --border: #1f2937;
+      --text: #e5e7eb;
+      --text-dim: #9ca3af;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --success: #22c55e;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: grid;
+      grid-template-columns: 1fr 380px;
+      grid-template-rows: auto 1fr;
+      gap: 1px;
+      overflow: hidden;
+    }
+
+    /* Header */
+    header {
+      grid-column: 1 / -1;
+      background: var(--panel-bg);
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+    }
+    header h1 {
+      font-size: 16px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    header h1 span { color: var(--accent); }
+    .header-actions {
+      display: flex;
+      gap: 6px;
+    }
+    .btn {
+      padding: 6px 12px;
+      border: none;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: white;
+    }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-secondary {
+      background: var(--border);
+      color: var(--text);
+    }
+    .btn-secondary:hover { background: #374151; }
+    .btn-success { background: var(--success); color: white; }
+    .btn-success:hover { background: #16a34a; }
+
+    /* Level List Panel */
+    .level-list-panel {
+      background: var(--panel-bg);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      max-height: 200px;
+      flex-shrink: 0;
+    }
+    .panel-header {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .panel-header h2 {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-dim);
+    }
+    .level-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 6px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      align-content: flex-start;
+    }
+    .level-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s;
+      border: 2px solid transparent;
+      flex-shrink: 0;
+    }
+    .level-item:hover { background: rgba(255,255,255,0.05); }
+    .level-item.selected {
+      background: rgba(59, 130, 246, 0.15);
+      border-color: var(--accent);
+    }
+    .level-item.dragging {
+      opacity: 0.5;
+      background: rgba(59, 130, 246, 0.1);
+    }
+    .level-color {
+      width: 18px;
+      height: 18px;
+      border-radius: 4px;
+      flex-shrink: 0;
+    }
+    .level-info {
+      flex: 1;
+      min-width: 0;
+    }
+    .level-name {
+      font-size: 12px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .level-meta {
+      display: none;
+    }
+    .level-drag-handle {
+      cursor: grab;
+      color: var(--text-dim);
+      padding: 2px;
+      font-size: 12px;
+    }
+    .level-drag-handle:active { cursor: grabbing; }
+    .add-level-btn {
+      margin: 6px;
+      padding: 6px 12px;
+      border: 1px dashed var(--border);
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.15s;
+      flex-shrink: 0;
+    }
+    .add-level-btn:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    /* Editor Panel */
+    .editor-panel {
+      background: var(--panel-bg);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      flex: 1;
+      border-bottom: 1px solid var(--border);
+    }
+    .editor-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+    }
+    .editor-section {
+      margin-bottom: 16px;
+    }
+    .editor-section h3 {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-dim);
+      margin-bottom: 8px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    /* Form Controls */
+    .form-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .form-row label {
+      font-size: 12px;
+      color: var(--text);
+      min-width: 80px;
+    }
+    .form-row input[type="number"],
+    .form-row input[type="text"] {
+      flex: 1;
+      padding: 6px 10px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
+      font-size: 12px;
+    }
+    .form-row input:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    .checkbox-row input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--accent);
+    }
+    .checkbox-row label {
+      font-size: 12px;
+    }
+
+    /* Pedestal Grid */
+    .pedestal-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+      max-width: 140px;
+      margin: 0 auto;
+    }
+    .pedestal-cell {
+      aspect-ratio: 1;
+      background: var(--bg);
+      border: 2px solid var(--border);
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      color: var(--text-dim);
+    }
+    .pedestal-cell:hover { border-color: var(--accent); }
+    .pedestal-cell.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: white;
+    }
+
+    /* Color Picker */
+    .color-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .color-row label {
+      font-size: 11px;
+      min-width: 60px;
+    }
+    .color-input-wrapper {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex: 1;
+    }
+    .color-swatch {
+      width: 24px;
+      height: 24px;
+      border-radius: 4px;
+      border: 2px solid var(--border);
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .color-hex {
+      flex: 1;
+      padding: 4px 8px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
+      font-size: 11px;
+      font-family: monospace;
+      min-width: 0;
+    }
+    .color-suggestion {
+      font-size: 10px;
+      color: var(--text-dim);
+      margin-top: 2px;
+    }
+
+    /* Orb List */
+    .orb-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .orb-item {
+      padding: 8px;
+      background: var(--bg);
+      border-radius: 6px;
+      border: 1px solid var(--border);
+    }
+    .orb-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 6px;
+    }
+    .orb-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .orb-delete {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 14px;
+      padding: 2px 6px;
+    }
+    .orb-delete:hover { color: #ef4444; }
+    .orb-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .orb-type-toggle {
+      display: flex;
+      gap: 4px;
+    }
+    .orb-type-btn {
+      padding: 3px 8px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text-dim);
+      font-size: 10px;
+      cursor: pointer;
+      border-radius: 3px;
+    }
+    .orb-type-btn.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: white;
+    }
+    .orb-coord {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .orb-coord label {
+      font-size: 10px;
+      color: var(--text-dim);
+    }
+    .orb-coord input {
+      width: 50px;
+      padding: 3px 6px;
+      background: var(--panel-bg);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      color: var(--text);
+      font-size: 11px;
+    }
+    .orb-wild {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .orb-wild input {
+      width: 14px;
+      height: 14px;
+      accent-color: #fbbf24;
+    }
+    .orb-wild label {
+      font-size: 10px;
+      color: #fbbf24;
+    }
+    .add-orb-btn {
+      margin-top: 8px;
+      padding: 6px 12px;
+      border: 1px dashed var(--border);
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 11px;
+      width: 100%;
+    }
+    .add-orb-btn:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    /* Inner Wall Config */
+    .inner-wall-config {
+      padding: 8px;
+      background: var(--bg);
+      border-radius: 6px;
+      margin-top: 8px;
+    }
+    .inner-wall-config.disabled {
+      opacity: 0.5;
+      pointer-events: none;
+    }
+
+    /* Preview Panel */
+    .preview-panel {
+      background: var(--panel-bg);
+      display: flex;
+      flex-direction: column;
+      height: 200px;
+      flex-shrink: 0;
+    }
+    #preview-canvas {
+      flex: 1;
+      width: 100%;
+      background: var(--bg);
+    }
+
+    /* Game Preview (Left side) */
+    .game-preview {
+      background: #050915;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .game-preview-header {
+      padding: 8px 16px;
+      background: var(--panel-bg);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .game-preview-header h3 {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-dim);
+    }
+    .game-iframe-container {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #050915;
+      overflow: hidden;
+    }
+    #game-iframe {
+      border: none;
+      width: 100%;
+      height: 100%;
+      max-width: 100%;
+      max-height: 100%;
+    }
+
+    /* Right Panel (Editor) */
+    .right-panel {
+      display: flex;
+      flex-direction: column;
+      background: var(--panel-bg);
+      border-left: 1px solid var(--border);
+      overflow: hidden;
+    }
+
+    /* Status indicator */
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--warning);
+    }
+    .status-dot.connected { background: var(--success); }
+
+    /* Empty state */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--text-dim);
+      text-align: center;
+      padding: 20px;
+    }
+    .empty-state p {
+      font-size: 12px;
+      margin-top: 4px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1><span>MarbLD</span> Level Designer</h1>
+    <div class="header-actions">
+      <button class="btn btn-secondary" id="import-btn">Import JSON</button>
+      <button class="btn btn-secondary" id="export-btn">Export JSON</button>
+      <button class="btn btn-success" id="apply-btn">Apply to Game</button>
+    </div>
+  </header>
+
+  <!-- Left: Game Preview -->
+  <section class="game-preview">
+    <div class="game-preview-header">
+      <h3>Game Preview</h3>
+      <div class="status">
+        <span class="status-dot" id="status-dot"></span>
+        <span id="status-text">Connecting...</span>
+      </div>
+    </div>
+    <div class="game-iframe-container">
+      <iframe id="game-iframe" src="index.html"></iframe>
+    </div>
+  </section>
+
+  <!-- Right: Level List + Editor + 2D Preview -->
+  <div class="right-panel">
+    <div class="level-list-panel">
+      <div class="panel-header">
+        <h2>Levels</h2>
+        <button class="btn btn-secondary" id="delete-level-btn" style="padding: 4px 8px; font-size: 11px;">Delete</button>
+      </div>
+      <div class="level-list" id="level-list"></div>
+      <button class="add-level-btn" id="add-level-btn">+ Add Level</button>
+    </div>
+
+    <div class="editor-panel">
+      <div class="panel-header">
+        <h2>Editor</h2>
+      </div>
+      <div class="editor-content" id="editor-content">
+        <div class="empty-state">
+          <p>Select a level to edit</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="preview-panel">
+      <div class="panel-header">
+        <h2>2D Preview</h2>
+      </div>
+      <canvas id="preview-canvas"></canvas>
+    </div>
+  </div>
+
+  <input type="file" id="import-file" accept=".json" style="display: none;">
+  <input type="color" id="color-picker-hidden" style="display: none;">
+
+  <script>
+    // ===========================================
+    // MarbLD Level Designer
+    // ===========================================
+
+    // Default level configuration template
+    const defaultLevelTemplate = {
+      pedestals: [4], // center (hole is derived from having pedestals)
+      colors: {
+        floor: [0.3, 0.3, 0.6],
+        wall: [0.25, 0.25, 0.5],
+        pedestal: [0.4, 0.4, 0.7],
+        pedestalHole: [0.2, 0.2, 0.4]
+      },
+      // Each orb: { type: 'random' | 'fixed', x?: number, z?: number, wild: boolean }
+      orbs: [{ type: 'random', wild: false }],
+      wild: false, // Wild pedestals (persists through rewind)
+      innerWall: null // { enabled: false, position: 200, halfWidth: 40, height: 60 }
+    };
+
+    // State
+    let levels = [];
+    let selectedLevelIndex = -1;
+    let gameConnected = false;
+
+    // Migrate old level format (orbCount/fixedOrb) to new format (orbs array)
+    function migrateLevelFormat(level) {
+      if (level.orbs) return level; // Already new format
+      const orbs = [];
+      // Convert fixedOrb if present
+      if (level.fixedOrb) {
+        orbs.push({ type: 'fixed', x: level.fixedOrb.x, z: level.fixedOrb.z, wild: level.fixedOrb.wild || false });
+      }
+      // Add random orbs based on orbCount
+      const randomCount = level.orbCount || 0;
+      for (let i = 0; i < randomCount; i++) {
+        orbs.push({ type: 'random', wild: false });
+      }
+      // Clean up old properties
+      delete level.orbCount;
+      delete level.fixedOrb;
+      level.orbs = orbs;
+      return level;
+    }
+
+    // DOM elements
+    const levelListEl = document.getElementById('level-list');
+    const editorContentEl = document.getElementById('editor-content');
+    const previewCanvas = document.getElementById('preview-canvas');
+    const previewCtx = previewCanvas.getContext('2d');
+    const gameIframe = document.getElementById('game-iframe');
+    const statusDot = document.getElementById('status-dot');
+    const statusText = document.getElementById('status-text');
+
+    // ===========================================
+    // Color Utilities
+    // ===========================================
+    function rgbToHex(r, g, b) {
+      return '#' + [r, g, b].map(x => {
+        const hex = Math.round(x * 255).toString(16);
+        return hex.length === 1 ? '0' + hex : hex;
+      }).join('');
+    }
+
+    function hexToRgb(hex) {
+      const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+      return result ? [
+        parseInt(result[1], 16) / 255,
+        parseInt(result[2], 16) / 255,
+        parseInt(result[3], 16) / 255
+      ] : [0.5, 0.5, 0.5];
+    }
+
+    function generateHarmoniousColors(baseHue) {
+      // Generate floor, wall, pedestal, pedestalHole colors from a base hue
+      const hslToRgb = (h, s, l) => {
+        let r, g, b;
+        if (s === 0) {
+          r = g = b = l;
+        } else {
+          const hue2rgb = (p, q, t) => {
+            if (t < 0) t += 1;
+            if (t > 1) t -= 1;
+            if (t < 1/6) return p + (q - p) * 6 * t;
+            if (t < 1/2) return q;
+            if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+            return p;
+          };
+          const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+          const p = 2 * l - q;
+          r = hue2rgb(p, q, h + 1/3);
+          g = hue2rgb(p, q, h);
+          b = hue2rgb(p, q, h - 1/3);
+        }
+        return [r, g, b];
+      };
+
+      return {
+        floor: hslToRgb(baseHue, 0.6, 0.4),
+        wall: hslToRgb(baseHue, 0.55, 0.35),
+        pedestal: hslToRgb(baseHue, 0.65, 0.5),
+        pedestalHole: hslToRgb(baseHue, 0.5, 0.28)
+      };
+    }
+
+    function suggestNextColor(existingLevels) {
+      // Suggest a hue that's different from existing levels
+      const usedHues = existingLevels.map(l => {
+        const [r, g, b] = l.colors.floor;
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        if (max === min) return 0;
+        let h;
+        if (max === r) h = (g - b) / (max - min);
+        else if (max === g) h = 2 + (b - r) / (max - min);
+        else h = 4 + (r - g) / (max - min);
+        h = h / 6;
+        if (h < 0) h += 1;
+        return h;
+      });
+
+      // Find the largest gap in used hues
+      if (usedHues.length === 0) return 0.6; // Start with blue
+      usedHues.sort((a, b) => a - b);
+
+      let maxGap = 0;
+      let bestHue = 0;
+      for (let i = 0; i < usedHues.length; i++) {
+        const next = i === usedHues.length - 1 ? usedHues[0] + 1 : usedHues[i + 1];
+        const gap = next - usedHues[i];
+        if (gap > maxGap) {
+          maxGap = gap;
+          bestHue = (usedHues[i] + gap / 2) % 1;
+        }
+      }
+      return bestHue;
+    }
+
+    // ===========================================
+    // Level List Rendering
+    // ===========================================
+    function renderLevelList() {
+      levelListEl.innerHTML = '';
+      levels.forEach((level, index) => {
+        const item = document.createElement('div');
+        item.className = 'level-item' + (index === selectedLevelIndex ? ' selected' : '');
+        item.draggable = true;
+        item.dataset.index = index;
+
+        const color = level.colors.floor;
+        const hexColor = rgbToHex(color[0], color[1], color[2]);
+
+        const pedestalCount = level.pedestals.length;
+        const orbCount = level.orbs?.length || 0;
+        const meta = `${pedestalCount} pedestal${pedestalCount !== 1 ? 's' : ''}, ${orbCount} orb${orbCount !== 1 ? 's' : ''}`;
+
+        item.innerHTML = `
+          <div class="level-drag-handle">&#9776;</div>
+          <div class="level-color" style="background: ${hexColor}"></div>
+          <div class="level-info">
+            <div class="level-name">Level ${index}${level.pedestals.length === 0 ? ' (Final)' : ''}</div>
+            <div class="level-meta">${meta}</div>
+          </div>
+        `;
+
+        item.addEventListener('click', () => selectLevel(index));
+        item.addEventListener('dragstart', handleDragStart);
+        item.addEventListener('dragover', handleDragOver);
+        item.addEventListener('drop', handleDrop);
+        item.addEventListener('dragend', handleDragEnd);
+
+        levelListEl.appendChild(item);
+      });
+    }
+
+    // ===========================================
+    // Drag & Drop Reordering
+    // ===========================================
+    let draggedIndex = null;
+
+    function handleDragStart(e) {
+      draggedIndex = parseInt(e.target.closest('.level-item').dataset.index);
+      e.target.closest('.level-item').classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    }
+
+    function handleDragOver(e) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+    }
+
+    function handleDrop(e) {
+      e.preventDefault();
+      const targetIndex = parseInt(e.target.closest('.level-item').dataset.index);
+      if (draggedIndex !== null && draggedIndex !== targetIndex) {
+        const [moved] = levels.splice(draggedIndex, 1);
+        levels.splice(targetIndex, 0, moved);
+        if (selectedLevelIndex === draggedIndex) {
+          selectedLevelIndex = targetIndex;
+        } else if (selectedLevelIndex > draggedIndex && selectedLevelIndex <= targetIndex) {
+          selectedLevelIndex--;
+        } else if (selectedLevelIndex < draggedIndex && selectedLevelIndex >= targetIndex) {
+          selectedLevelIndex++;
+        }
+        renderLevelList();
+        renderEditor();
+        renderPreview();
+      }
+    }
+
+    function handleDragEnd(e) {
+      e.target.closest('.level-item')?.classList.remove('dragging');
+      draggedIndex = null;
+    }
+
+    // ===========================================
+    // Editor Rendering
+    // ===========================================
+    function selectLevel(index) {
+      selectedLevelIndex = index;
+      renderLevelList();
+      renderEditor();
+      renderPreview();
+
+      // Jump to level in game preview
+      if (gameConnected) {
+        gameIframe.contentWindow.postMessage({
+          type: 'marbl-preview-level',
+          levelIndex: index
+        }, '*');
+      }
+    }
+
+    function renderEditor() {
+      if (selectedLevelIndex < 0 || selectedLevelIndex >= levels.length) {
+        editorContentEl.innerHTML = '<div class="empty-state"><p>Select a level to edit</p></div>';
+        return;
+      }
+
+      const level = levels[selectedLevelIndex];
+      const isFinalLevel = level.pedestals.length === 0;
+
+      editorContentEl.innerHTML = `
+        <!-- Basic Settings -->
+        <div class="editor-section">
+          <h3>Basic Settings</h3>
+          <div class="checkbox-row">
+            <input type="checkbox" id="wild" ${level.wild ? 'checked' : ''}>
+            <label for="wild">Wild (persists through rewind)</label>
+          </div>
+        </div>
+
+        <!-- Pedestals -->
+        <div class="editor-section">
+          <h3>Pedestals (3x3 Grid)</h3>
+          <div class="pedestal-grid">
+            ${[8,7,6,5,4,3,2,1,0].map(i => `
+              <div class="pedestal-cell ${level.pedestals.includes(i) ? 'active' : ''}" data-index="${i}">
+                ${i === 4 ? 'C' : ''}
+              </div>
+            `).join('')}
+          </div>
+          <p style="font-size: 11px; color: var(--text-dim); text-align: center; margin-top: 8px;">
+            Click cells to toggle pedestals. C = Center
+          </p>
+        </div>
+
+        <!-- Orbs -->
+        <div class="editor-section">
+          <h3>Orbs</h3>
+          <div class="orb-list">
+            ${(level.orbs || []).map((orb, i) => `
+              <div class="orb-item" data-orb-index="${i}">
+                <div class="orb-header">
+                  <span class="orb-title">Orb ${i + 1}</span>
+                  <button class="orb-delete" data-orb-index="${i}">&times;</button>
+                </div>
+                <div class="orb-controls">
+                  <div class="orb-type-toggle">
+                    <button class="orb-type-btn ${orb.type === 'random' ? 'active' : ''}" data-orb-index="${i}" data-type="random">Random</button>
+                    <button class="orb-type-btn ${orb.type === 'fixed' ? 'active' : ''}" data-orb-index="${i}" data-type="fixed">Fixed</button>
+                  </div>
+                  ${orb.type === 'fixed' ? `
+                    <div class="orb-coord">
+                      <label>X</label>
+                      <input type="number" class="orb-x" data-orb-index="${i}" value="${orb.x ?? 250}" step="10">
+                    </div>
+                    <div class="orb-coord">
+                      <label>Z</label>
+                      <input type="number" class="orb-z" data-orb-index="${i}" value="${orb.z ?? 0}" step="10">
+                    </div>
+                  ` : ''}
+                  <div class="orb-wild">
+                    <input type="checkbox" class="orb-wild-check" data-orb-index="${i}" ${orb.wild ? 'checked' : ''}>
+                    <label>Wild</label>
+                  </div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+          <button class="add-orb-btn" id="add-orb-btn">+ Add Orb</button>
+        </div>
+
+        <!-- Colors -->
+        <div class="editor-section">
+          <h3>Colors</h3>
+          <button class="btn btn-secondary" id="auto-colors-btn" style="margin-bottom: 12px; width: 100%;">
+            Auto-generate harmonious colors
+          </button>
+          ${['floor', 'wall', 'pedestal', 'pedestalHole'].map(key => {
+            const color = level.colors[key];
+            const hex = rgbToHex(color[0], color[1], color[2]);
+            const label = key === 'pedestalHole' ? 'Ped. Hole' : key.charAt(0).toUpperCase() + key.slice(1);
+            return `
+              <div class="color-row">
+                <label>${label}</label>
+                <div class="color-input-wrapper">
+                  <div class="color-swatch" style="background: ${hex}" data-color-key="${key}"></div>
+                  <input type="text" class="color-hex" value="${hex}" data-color-key="${key}">
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+
+        <!-- Inner Walls -->
+        <div class="editor-section">
+          <h3>Inner Walls</h3>
+          <div class="checkbox-row">
+            <input type="checkbox" id="has-inner-wall" ${level.innerWall?.enabled ? 'checked' : ''}>
+            <label for="has-inner-wall">Enable inner walls</label>
+          </div>
+          <div class="inner-wall-config ${!level.innerWall?.enabled ? 'disabled' : ''}" id="inner-wall-config">
+            <div class="form-row">
+              <label>Position</label>
+              <input type="number" id="inner-wall-position" value="${level.innerWall?.position ?? 200}" step="10">
+            </div>
+            <div class="form-row">
+              <label>Half Width</label>
+              <input type="number" id="inner-wall-half-width" value="${level.innerWall?.halfWidth ?? 40}" step="5">
+            </div>
+            <div class="form-row">
+              <label>Height</label>
+              <input type="number" id="inner-wall-height" value="${level.innerWall?.height ?? 60}" step="5">
+            </div>
+          </div>
+        </div>
+      `;
+
+      // Attach event listeners
+      attachEditorListeners();
+    }
+
+    function attachEditorListeners() {
+      const level = levels[selectedLevelIndex];
+
+      // Basic settings
+      document.getElementById('wild')?.addEventListener('change', (e) => {
+        level.wild = e.target.checked;
+        applyToGame();
+      });
+
+      // Pedestals
+      document.querySelectorAll('.pedestal-cell').forEach(cell => {
+        cell.addEventListener('click', () => {
+          const idx = parseInt(cell.dataset.index);
+          const pos = level.pedestals.indexOf(idx);
+          if (pos >= 0) {
+            level.pedestals.splice(pos, 1);
+          } else {
+            level.pedestals.push(idx);
+            level.pedestals.sort((a, b) => a - b);
+          }
+          renderEditor();
+          renderLevelList();
+          renderPreview();
+          applyToGame();
+        });
+      });
+
+      // Orbs - Add orb button
+      document.getElementById('add-orb-btn')?.addEventListener('click', () => {
+        if (!level.orbs) level.orbs = [];
+        level.orbs.push({ type: 'random', wild: false });
+        renderEditor();
+        renderLevelList();
+        renderPreview();
+        applyToGame();
+      });
+
+      // Orbs - Delete buttons
+      document.querySelectorAll('.orb-delete').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const idx = parseInt(btn.dataset.orbIndex);
+          level.orbs.splice(idx, 1);
+          renderEditor();
+          renderLevelList();
+          renderPreview();
+          applyToGame();
+        });
+      });
+
+      // Orbs - Type toggle buttons
+      document.querySelectorAll('.orb-type-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const idx = parseInt(btn.dataset.orbIndex);
+          const newType = btn.dataset.type;
+          level.orbs[idx].type = newType;
+          if (newType === 'fixed') {
+            // Default to position outside center (minCenterDistance is 220)
+            level.orbs[idx].x = level.orbs[idx].x ?? 250;
+            level.orbs[idx].z = level.orbs[idx].z ?? 0;
+          }
+          renderEditor();
+          renderPreview();
+          applyToGame();
+        });
+      });
+
+      // Orbs - X coordinate inputs
+      document.querySelectorAll('.orb-x').forEach(input => {
+        input.addEventListener('change', () => {
+          const idx = parseInt(input.dataset.orbIndex);
+          level.orbs[idx].x = parseFloat(input.value) || 0;
+          renderPreview();
+          applyToGame();
+        });
+      });
+
+      // Orbs - Z coordinate inputs
+      document.querySelectorAll('.orb-z').forEach(input => {
+        input.addEventListener('change', () => {
+          const idx = parseInt(input.dataset.orbIndex);
+          level.orbs[idx].z = parseFloat(input.value) || 0;
+          renderPreview();
+          applyToGame();
+        });
+      });
+
+      // Orbs - Wild checkboxes
+      document.querySelectorAll('.orb-wild-check').forEach(checkbox => {
+        checkbox.addEventListener('change', () => {
+          const idx = parseInt(checkbox.dataset.orbIndex);
+          level.orbs[idx].wild = checkbox.checked;
+          renderPreview();
+          applyToGame();
+        });
+      });
+
+      // Colors
+      document.getElementById('auto-colors-btn')?.addEventListener('click', () => {
+        const hue = suggestNextColor(levels.filter((_, i) => i !== selectedLevelIndex));
+        level.colors = generateHarmoniousColors(hue);
+        renderEditor();
+        renderLevelList();
+        renderPreview();
+        applyToGame();
+      });
+
+      document.querySelectorAll('.color-swatch').forEach(swatch => {
+        swatch.addEventListener('click', () => {
+          const key = swatch.dataset.colorKey;
+          const picker = document.getElementById('color-picker-hidden');
+          const currentHex = rgbToHex(...level.colors[key]);
+          picker.value = currentHex;
+          picker.onchange = () => {
+            level.colors[key] = hexToRgb(picker.value);
+            renderEditor();
+            renderLevelList();
+            renderPreview();
+            applyToGame();
+          };
+          picker.click();
+        });
+      });
+
+      document.querySelectorAll('.color-hex').forEach(input => {
+        input.addEventListener('change', () => {
+          const key = input.dataset.colorKey;
+          level.colors[key] = hexToRgb(input.value);
+          renderEditor();
+          renderLevelList();
+          renderPreview();
+          applyToGame();
+        });
+      });
+
+      // Inner walls
+      document.getElementById('has-inner-wall')?.addEventListener('change', (e) => {
+        if (e.target.checked) {
+          level.innerWall = { enabled: true, position: 200, halfWidth: 40, height: 60 };
+        } else {
+          level.innerWall = null;
+        }
+        renderEditor();
+        renderPreview();
+        applyToGame();
+      });
+
+      document.getElementById('inner-wall-position')?.addEventListener('change', (e) => {
+        if (level.innerWall) level.innerWall.position = parseFloat(e.target.value) || 200;
+        renderPreview();
+        applyToGame();
+      });
+
+      document.getElementById('inner-wall-half-width')?.addEventListener('change', (e) => {
+        if (level.innerWall) level.innerWall.halfWidth = parseFloat(e.target.value) || 40;
+        renderPreview();
+        applyToGame();
+      });
+
+      document.getElementById('inner-wall-height')?.addEventListener('change', (e) => {
+        if (level.innerWall) level.innerWall.height = parseFloat(e.target.value) || 60;
+        applyToGame();
+      });
+    }
+
+    // ===========================================
+    // 2D Preview
+    // ===========================================
+    function renderPreview() {
+      const rect = previewCanvas.getBoundingClientRect();
+      previewCanvas.width = rect.width * window.devicePixelRatio;
+      previewCanvas.height = rect.height * window.devicePixelRatio;
+      previewCtx.scale(window.devicePixelRatio, window.devicePixelRatio);
+
+      const w = rect.width;
+      const h = rect.height;
+      const size = Math.min(w, h) - 40;
+      const cx = w / 2;
+      const cy = h / 2;
+
+      // Clear
+      previewCtx.fillStyle = '#0a0f1a';
+      previewCtx.fillRect(0, 0, w, h);
+
+      if (selectedLevelIndex < 0 || selectedLevelIndex >= levels.length) return;
+
+      const level = levels[selectedLevelIndex];
+      const scale = size / 920; // Game plane is 920 units
+
+      // Draw floor
+      const floorColor = rgbToHex(...level.colors.floor);
+      previewCtx.fillStyle = floorColor;
+      previewCtx.fillRect(cx - size/2, cy - size/2, size, size);
+
+      // Draw walls (border)
+      const wallColor = rgbToHex(...level.colors.wall);
+      previewCtx.strokeStyle = wallColor;
+      previewCtx.lineWidth = 8 * scale;
+      previewCtx.strokeRect(cx - size/2, cy - size/2, size, size);
+
+      // Draw inner walls if enabled
+      // In game: walls at X=±p (top/bottom) and Z=±p (left/right)
+      // Canvas: coordinates are negated
+      if (level.innerWall?.enabled) {
+        const p = level.innerWall.position * scale;
+        const t = level.innerWall.halfWidth * scale;
+        previewCtx.strokeStyle = wallColor;
+        previewCtx.lineWidth = t * 2;
+
+        // Draw the four inner wall segments (negated coords)
+        previewCtx.beginPath();
+        // Top wall (game X = -p → canvas y = +p)
+        previewCtx.moveTo(cx - size/2, cy + p);
+        previewCtx.lineTo(cx + size/2, cy + p);
+        // Bottom wall (game X = +p → canvas y = -p)
+        previewCtx.moveTo(cx - size/2, cy - p);
+        previewCtx.lineTo(cx + size/2, cy - p);
+        // Left wall (game Z = -p → canvas x = +p)
+        previewCtx.moveTo(cx + p, cy - size/2);
+        previewCtx.lineTo(cx + p, cy + size/2);
+        // Right wall (game Z = +p → canvas x = -p)
+        previewCtx.moveTo(cx - p, cy - size/2);
+        previewCtx.lineTo(cx - p, cy + size/2);
+        previewCtx.stroke();
+      }
+
+      // Draw pedestals (3x3 grid)
+      const pedestalColor = rgbToHex(...level.colors.pedestal);
+      const spacing = 300 * scale; // pedestalGrid.spacing = 300
+      const pedestalSize = 100 * scale;
+
+      // Grid positions (matching game's pedestalReferencePositions)
+      // In game: X = vertical (neg=top, pos=bottom), Z = horizontal (neg=left, pos=right)
+      const gridPositions = [
+        { x: -spacing, z: -spacing }, // 0: top-left
+        { x: -spacing, z: 0 },        // 1: top-center
+        { x: -spacing, z: spacing },  // 2: top-right
+        { x: 0, z: -spacing },        // 3: center-left
+        { x: 0, z: 0 },               // 4: center
+        { x: 0, z: spacing },         // 5: center-right
+        { x: spacing, z: -spacing },  // 6: bottom-left
+        { x: spacing, z: 0 },         // 7: bottom-center
+        { x: spacing, z: spacing }    // 8: bottom-right
+      ];
+
+      level.pedestals.forEach(idx => {
+        const pos = gridPositions[idx];
+        if (!pos) return;
+        // Map game coords to canvas: Z→horizontal (negated), X→vertical (negated)
+        const px = cx - pos.z;
+        const py = cy - pos.x;
+
+        previewCtx.fillStyle = pedestalColor;
+        previewCtx.beginPath();
+        previewCtx.arc(px, py, pedestalSize / 2, 0, Math.PI * 2);
+        previewCtx.fill();
+      });
+
+      // Draw central hole if level has pedestals
+      if (level.pedestals.length > 0) {
+        const holeRadius = 90 * scale;
+        previewCtx.fillStyle = '#050915';
+        previewCtx.beginPath();
+        previewCtx.arc(cx, cy, holeRadius, 0, Math.PI * 2);
+        previewCtx.fill();
+        previewCtx.strokeStyle = '#333';
+        previewCtx.lineWidth = 2;
+        previewCtx.stroke();
+      }
+
+      // Draw orbs from the orbs array
+      const orbs = level.orbs || [];
+      const fixedOrbs = orbs.filter(o => o.type === 'fixed');
+      const randomOrbs = orbs.filter(o => o.type === 'random');
+      const orbRadius = 12 * scale;
+
+      // Draw fixed orbs
+      fixedOrbs.forEach(orb => {
+        // Map game coords to canvas: Z→horizontal (negated), X→vertical (negated)
+        const orbX = cx - (orb.z ?? 0) * scale;
+        const orbY = cy - (orb.x ?? 250) * scale;
+
+        previewCtx.fillStyle = orb.wild ? '#fbbf24' : '#60a5fa';
+        previewCtx.beginPath();
+        previewCtx.arc(orbX, orbY, orbRadius, 0, Math.PI * 2);
+        previewCtx.fill();
+        previewCtx.strokeStyle = '#fff';
+        previewCtx.lineWidth = 2;
+        previewCtx.stroke();
+      });
+
+      // Draw random orb spawn indicator
+      if (randomOrbs.length > 0) {
+        previewCtx.strokeStyle = 'rgba(96, 165, 250, 0.3)';
+        previewCtx.setLineDash([5, 5]);
+        previewCtx.lineWidth = 2;
+        const minDist = 220 * scale;
+        previewCtx.beginPath();
+        previewCtx.arc(cx, cy, minDist, 0, Math.PI * 2);
+        previewCtx.stroke();
+        previewCtx.setLineDash([]);
+
+        const wildCount = randomOrbs.filter(o => o.wild).length;
+        const normalCount = randomOrbs.length - wildCount;
+        let label = `${randomOrbs.length} random`;
+        if (wildCount > 0 && normalCount > 0) {
+          label = `${normalCount} random + ${wildCount} wild`;
+        } else if (wildCount > 0) {
+          label = `${wildCount} wild random`;
+        }
+        previewCtx.fillStyle = 'rgba(96, 165, 250, 0.5)';
+        previewCtx.font = '11px sans-serif';
+        previewCtx.textAlign = 'center';
+        previewCtx.fillText(label, cx, cy + minDist + 15);
+      }
+
+      // Level number label
+      previewCtx.fillStyle = 'rgba(255,255,255,0.7)';
+      previewCtx.font = 'bold 14px sans-serif';
+      previewCtx.textAlign = 'left';
+      previewCtx.fillText(`Level ${selectedLevelIndex}`, 15, 25);
+    }
+
+    // ===========================================
+    // Game Communication
+    // ===========================================
+    function applyToGame() {
+      if (!gameConnected) return;
+      gameIframe.contentWindow.postMessage({
+        type: 'marbl-load-levels',
+        levels: JSON.parse(JSON.stringify(levels)),
+        preserveLevel: selectedLevelIndex // Tell game to jump back to this level
+      }, '*');
+    }
+
+    window.addEventListener('message', (e) => {
+      if (e.data?.type === 'marbl-ready') {
+        gameConnected = true;
+        statusDot.classList.add('connected');
+        statusText.textContent = 'Connected';
+        // Load initial levels from game
+        loadLevelsFromGame();
+      }
+      if (e.data?.type === 'marbl-reloaded') {
+        // Game confirmed reload - jump to preserved level
+        if (e.data.preservedLevel !== undefined && e.data.preservedLevel >= 0) {
+          // Level was preserved, no action needed
+        }
+      }
+    });
+
+    function loadLevelsFromGame() {
+      // Try to get levels from game's API
+      try {
+        const gameLevels = gameIframe.contentWindow.marblAPI?.getLevelConfigs();
+        if (gameLevels && gameLevels.length > 0) {
+          levels = JSON.parse(JSON.stringify(gameLevels));
+          // Migrate old format (orbCount/fixedOrb) to new format (orbs array)
+          levels.forEach(migrateLevelFormat);
+          renderLevelList();
+          if (levels.length > 0) {
+            selectLevel(0);
+          }
+        }
+      } catch (err) {
+        console.warn('Could not load levels from game:', err);
+        // Use default if can't load
+        levels = [JSON.parse(JSON.stringify(defaultLevelTemplate))];
+        renderLevelList();
+        selectLevel(0);
+      }
+    }
+
+    // ===========================================
+    // Level Management
+    // ===========================================
+    document.getElementById('add-level-btn').addEventListener('click', () => {
+      const hue = suggestNextColor(levels);
+      const newLevel = JSON.parse(JSON.stringify(defaultLevelTemplate));
+      newLevel.colors = generateHarmoniousColors(hue);
+      levels.push(newLevel);
+      renderLevelList();
+      selectLevel(levels.length - 1);
+      applyToGame();
+    });
+
+    document.getElementById('delete-level-btn').addEventListener('click', () => {
+      if (selectedLevelIndex < 0 || levels.length <= 1) return;
+      if (!confirm(`Delete Level ${selectedLevelIndex}?`)) return;
+      levels.splice(selectedLevelIndex, 1);
+      selectedLevelIndex = Math.min(selectedLevelIndex, levels.length - 1);
+      renderLevelList();
+      renderEditor();
+      renderPreview();
+      applyToGame();
+    });
+
+    // ===========================================
+    // Import/Export
+    // ===========================================
+    document.getElementById('export-btn').addEventListener('click', () => {
+      const json = JSON.stringify(levels, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'marbl-levels.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    document.getElementById('import-btn').addEventListener('click', () => {
+      document.getElementById('import-file').click();
+    });
+
+    document.getElementById('import-file').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const imported = JSON.parse(event.target.result);
+          if (Array.isArray(imported) && imported.length > 0) {
+            levels = imported;
+            renderLevelList();
+            selectLevel(0);
+            applyToGame();
+          }
+        } catch (err) {
+          alert('Failed to parse JSON: ' + err.message);
+        }
+      };
+      reader.readAsText(file);
+      e.target.value = '';
+    });
+
+    document.getElementById('apply-btn').addEventListener('click', () => {
+      applyToGame();
+    });
+
+    // ===========================================
+    // Initialization
+    // ===========================================
+    window.addEventListener('resize', () => {
+      renderPreview();
+    });
+
+    // Initial render with empty state
+    renderLevelList();
+    renderPreview();
+
+    // Wait a bit for iframe to load, then try to connect
+    setTimeout(() => {
+      if (!gameConnected) {
+        statusText.textContent = 'Waiting for game...';
+      }
+    }, 2000);
+  </script>
+</body>
+</html>
