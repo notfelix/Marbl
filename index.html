@@ -1836,35 +1836,87 @@
       marble: createMesh(createSphere(marble.r, 18, 18))
     };
 
-    function createWallMeshes(){
-      const t=plane.wallThickness;
-      const h=plane.wallHeight;
-      const w=plane.w;
-      const hl=plane.h;
-      const boxes=[
-        createBox(-w/2-t, w/2+t, 0, h, hl/2, hl/2+t),    // back
-        createBox(-w/2-t, w/2+t, 0, h, -hl/2-t, -hl/2),  // front
-        createBox(-w/2-t, -w/2, 0, h, -hl/2, hl/2),      // left
-        createBox(w/2, w/2+t, 0, h, -hl/2, hl/2)         // right
+    function createWallFrame(outerW, outerH, innerW, innerH, height) {
+      // Create a hollow rectangular frame as a single mesh (no internal seams)
+      const ow = outerW / 2, oh = outerH / 2;
+      const iw = innerW / 2, ih = innerH / 2;
+      const y0 = 0, y1 = height;
+
+      // 16 vertices: 4 outer bottom, 4 outer top, 4 inner bottom, 4 inner top
+      const verts = [
+        // Outer corners bottom (0-3)
+        -ow, y0, -oh,   ow, y0, -oh,   ow, y0, oh,   -ow, y0, oh,
+        // Outer corners top (4-7)
+        -ow, y1, -oh,   ow, y1, -oh,   ow, y1, oh,   -ow, y1, oh,
+        // Inner corners bottom (8-11)
+        -iw, y0, -ih,   iw, y0, -ih,   iw, y0, ih,   -iw, y0, ih,
+        // Inner corners top (12-15)
+        -iw, y1, -ih,   iw, y1, -ih,   iw, y1, ih,   -iw, y1, ih
       ];
-      return boxes.map(createMesh);
+
+      // Build faces with proper normals (each face needs its own vertices for flat shading)
+      const positions = [];
+      const normals = [];
+
+      function addQuad(v0, v1, v2, v3, nx, ny, nz) {
+        // Two triangles with CCW winding when viewed from normal direction
+        const p = (i) => [verts[i*3], verts[i*3+1], verts[i*3+2]];
+        const [p0, p1, p2, p3] = [p(v0), p(v1), p(v2), p(v3)];
+        // Winding: v0-v2-v1 and v0-v3-v2 for correct front-facing
+        positions.push(...p0, ...p2, ...p1, ...p0, ...p3, ...p2);
+        for (let i = 0; i < 6; i++) normals.push(nx, ny, nz);
+      }
+
+      // Outer faces (normals pointing outward)
+      addQuad(0, 1, 5, 4, 0, 0, -1);  // front (z = -oh)
+      addQuad(2, 3, 7, 6, 0, 0, 1);   // back (z = +oh)
+      addQuad(3, 0, 4, 7, -1, 0, 0);  // left (x = -ow)
+      addQuad(1, 2, 6, 5, 1, 0, 0);   // right (x = +ow)
+
+      // Inner faces (normals pointing inward toward play area)
+      addQuad(9, 8, 12, 13, 0, 0, -1);   // front inner (z = -ih)
+      addQuad(11, 10, 14, 15, 0, 0, 1);  // back inner (z = +ih)
+      addQuad(8, 11, 15, 12, -1, 0, 0);  // left inner (x = -iw)
+      addQuad(10, 9, 13, 14, 1, 0, 0);   // right inner (x = +iw)
+
+      // Top rim (connecting outer top to inner top)
+      addQuad(4, 5, 13, 12, 0, 1, 0);   // front rim
+      addQuad(6, 7, 15, 14, 0, 1, 0);   // back rim
+      addQuad(7, 4, 12, 15, 0, 1, 0);   // left rim
+      addQuad(5, 6, 14, 13, 0, 1, 0);   // right rim
+
+      // Bottom rim (connecting outer bottom to inner bottom)
+      addQuad(1, 0, 8, 9, 0, -1, 0);    // front rim
+      addQuad(3, 2, 10, 11, 0, -1, 0);  // back rim
+      addQuad(0, 3, 11, 8, 0, -1, 0);   // left rim
+      addQuad(2, 1, 9, 10, 0, -1, 0);   // right rim
+
+      // Generate sequential indices (non-indexed rendering with flat shading)
+      const indices = [];
+      for (let i = 0; i < positions.length / 3; i++) indices.push(i);
+
+      return { positions: new Float32Array(positions), normals: new Float32Array(normals), indices };
+    }
+
+    function createWallMeshes(){
+      const t = plane.wallThickness;
+      const h = plane.wallHeight;
+      const w = plane.w;
+      const hl = plane.h;
+      // Single unified wall frame mesh
+      const frame = createWallFrame(w + t * 2, hl + t * 2, w, hl, h);
+      return [createMesh(frame)];
     }
 
     function createInnerWallMeshes(){
       const p = innerWall.position;
       const t = innerWall.halfWidth;
       const h = innerWall.height;
-      const boxes = [
-        // Top wall (X = -p, runs along Z) - extended to cover corners
-        createBox(-p - t, -p + t, 0, h, -p - t, p + t),
-        // Bottom wall (X = +p, runs along Z) - extended to cover corners
-        createBox(p - t, p + t, 0, h, -p - t, p + t),
-        // Left wall (Z = -p, runs along X) - fits between top/bottom walls
-        createBox(-p + t, p - t, 0, h, -p - t, -p + t),
-        // Right wall (Z = +p, runs along X) - fits between top/bottom walls
-        createBox(-p + t, p - t, 0, h, p - t, p + t)
-      ];
-      return boxes.map(createMesh);
+      // Single unified inner wall frame mesh
+      const outerSize = (p + t) * 2;
+      const innerSize = (p - t) * 2;
+      const frame = createWallFrame(outerSize, outerSize, innerSize, innerSize, h);
+      return [createMesh(frame)];
     }
 
     // Camera/light
@@ -2381,11 +2433,12 @@
         gl.depthMask(allowDepthWrite);
         drawMesh(meshes.floor, matrix, palette.floor, [0.04,0.06,0.1], entry.alpha, level.hasHole ? mask : null);
         const wallColor = palette.wall;
+        gl.enable(gl.CULL_FACE);
         for(const w of meshes.walls) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
-        // Draw inner square walls on level 4 (final level)
         if (level.index === 4) {
           for(const w of meshes.innerWalls) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
         }
+        gl.disable(gl.CULL_FACE);
         const pedestals = pedestalsForLevel(level);
         const isWild = isWildPedestal(level.index);
         for(const { pos, idx } of pedestals){
@@ -2469,10 +2522,12 @@
         gl.depthMask(true);
         drawMesh(meshes.floor, matrix, palette.floor, [0.04,0.06,0.1], entry.alpha, level.hasHole ? mask : null);
         const wallColor = palette.wall;
+        gl.enable(gl.CULL_FACE);
         for(const w of meshes.walls) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
         if (level.index === 4) {
           for(const w of meshes.innerWalls) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
         }
+        gl.disable(gl.CULL_FACE);
       }
 
       if (!paused) rafId = requestAnimationFrame(frame);
