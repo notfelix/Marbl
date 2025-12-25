@@ -1756,6 +1756,13 @@
       }
     }
 
+    // Inner wall configuration for level 4 (used by both mesh creation and collision)
+    const innerWall = {
+      position: pedestalGrid.spacing - pedestalFootprint - pedestal.topSize / 2,
+      halfWidth: pedestal.topSize / 2,
+      height: pedestal.height
+    };
+
     // Geometry instances
     const meshes = {
       floor: createMesh(createBox(-plane.w/2, plane.w/2, -2, 0, -plane.h/2, plane.h/2)),
@@ -1781,19 +1788,18 @@
     }
 
     function createInnerWallMeshes(){
-      // Inner square walls for level 4, outer edge touches bottom of pedestal ramps
-      const innerCorner = pedestalGrid.spacing - pedestalFootprint - pedestal.topSize / 2;
-      const t = pedestal.topSize / 2;  // half-width of wall (as wide as pedestal top)
-      const h = pedestal.height;       // wall height same as pedestal
+      const p = innerWall.position;
+      const t = innerWall.halfWidth;
+      const h = innerWall.height;
       const boxes = [
-        // Top wall (X = -innerCorner, runs along Z) - extended to cover corners
-        createBox(-innerCorner - t, -innerCorner + t, 0, h, -innerCorner - t, innerCorner + t),
-        // Bottom wall (X = +innerCorner, runs along Z) - extended to cover corners
-        createBox(innerCorner - t, innerCorner + t, 0, h, -innerCorner - t, innerCorner + t),
-        // Left wall (Z = -innerCorner, runs along X) - fits between top/bottom walls
-        createBox(-innerCorner + t, innerCorner - t, 0, h, -innerCorner - t, -innerCorner + t),
-        // Right wall (Z = +innerCorner, runs along X) - fits between top/bottom walls
-        createBox(-innerCorner + t, innerCorner - t, 0, h, innerCorner - t, innerCorner + t)
+        // Top wall (X = -p, runs along Z) - extended to cover corners
+        createBox(-p - t, -p + t, 0, h, -p - t, p + t),
+        // Bottom wall (X = +p, runs along Z) - extended to cover corners
+        createBox(p - t, p + t, 0, h, -p - t, p + t),
+        // Left wall (Z = -p, runs along X) - fits between top/bottom walls
+        createBox(-p + t, p - t, 0, h, -p - t, -p + t),
+        // Right wall (Z = +p, runs along X) - fits between top/bottom walls
+        createBox(-p + t, p - t, 0, h, p - t, p + t)
       ];
       return boxes.map(createMesh);
     }
@@ -1959,40 +1965,33 @@
 
       // Inner wall collision for level 4 (only when grounded on level 4, not falling through)
       if (landingSupport?.level?.index === 4 && landingSupport.support > 0.5) {
-        const innerCorner = pedestalGrid.spacing - pedestalFootprint - pedestal.topSize / 2;
-        const wallHalfWidth = pedestal.topSize / 2;
-        const wallOuterX1 = -innerCorner - wallHalfWidth - marble.r;
-        const wallInnerX1 = -innerCorner + wallHalfWidth + marble.r;
-        const wallInnerX2 = innerCorner - wallHalfWidth - marble.r;
-        const wallOuterX2 = innerCorner + wallHalfWidth + marble.r;
-        const wallOuterZ1 = -innerCorner - wallHalfWidth - marble.r;
-        const wallInnerZ1 = -innerCorner + wallHalfWidth + marble.r;
-        const wallInnerZ2 = innerCorner - wallHalfWidth - marble.r;
-        const wallOuterZ2 = innerCorner + wallHalfWidth + marble.r;
+        const p = innerWall.position;
+        const t = innerWall.halfWidth;
+        const r = marble.r;
+        const outer1 = -p - t - r;  // outer edge of negative wall
+        const inner1 = -p + t + r;  // inner edge of negative wall
+        const inner2 = p - t - r;   // inner edge of positive wall
+        const outer2 = p + t + r;   // outer edge of positive wall
 
-        // Check collision with left wall (X = -innerCorner)
-        if (marble.pos.x > wallOuterX1 && marble.pos.x < wallInnerX1 &&
-            marble.pos.z > -innerCorner && marble.pos.z < innerCorner) {
-          if (marble.vel.x > 0) { marble.pos.x = wallOuterX1; marble.vel.x *= -0.6; }
-          else { marble.pos.x = wallInnerX1; marble.vel.x *= -0.6; }
+        // Check collision with left wall (X = -p)
+        if (marble.pos.x > outer1 && marble.pos.x < inner1 && marble.pos.z > -p && marble.pos.z < p) {
+          if (marble.vel.x > 0) { marble.pos.x = outer1; marble.vel.x *= -0.6; }
+          else { marble.pos.x = inner1; marble.vel.x *= -0.6; }
         }
-        // Check collision with right wall (X = +innerCorner)
-        if (marble.pos.x > wallInnerX2 && marble.pos.x < wallOuterX2 &&
-            marble.pos.z > -innerCorner && marble.pos.z < innerCorner) {
-          if (marble.vel.x > 0) { marble.pos.x = wallInnerX2; marble.vel.x *= -0.6; }
-          else { marble.pos.x = wallOuterX2; marble.vel.x *= -0.6; }
+        // Check collision with right wall (X = +p)
+        if (marble.pos.x > inner2 && marble.pos.x < outer2 && marble.pos.z > -p && marble.pos.z < p) {
+          if (marble.vel.x > 0) { marble.pos.x = inner2; marble.vel.x *= -0.6; }
+          else { marble.pos.x = outer2; marble.vel.x *= -0.6; }
         }
-        // Check collision with front wall (Z = -innerCorner)
-        if (marble.pos.z > wallOuterZ1 && marble.pos.z < wallInnerZ1 &&
-            marble.pos.x > -innerCorner && marble.pos.x < innerCorner) {
-          if (marble.vel.z > 0) { marble.pos.z = wallOuterZ1; marble.vel.z *= -0.6; }
-          else { marble.pos.z = wallInnerZ1; marble.vel.z *= -0.6; }
+        // Check collision with front wall (Z = -p)
+        if (marble.pos.z > outer1 && marble.pos.z < inner1 && marble.pos.x > -p && marble.pos.x < p) {
+          if (marble.vel.z > 0) { marble.pos.z = outer1; marble.vel.z *= -0.6; }
+          else { marble.pos.z = inner1; marble.vel.z *= -0.6; }
         }
-        // Check collision with back wall (Z = +innerCorner)
-        if (marble.pos.z > wallInnerZ2 && marble.pos.z < wallOuterZ2 &&
-            marble.pos.x > -innerCorner && marble.pos.x < innerCorner) {
-          if (marble.vel.z > 0) { marble.pos.z = wallInnerZ2; marble.vel.z *= -0.6; }
-          else { marble.pos.z = wallOuterZ2; marble.vel.z *= -0.6; }
+        // Check collision with back wall (Z = +p)
+        if (marble.pos.z > inner2 && marble.pos.z < outer2 && marble.pos.x > -p && marble.pos.x < p) {
+          if (marble.vel.z > 0) { marble.pos.z = inner2; marble.vel.z *= -0.6; }
+          else { marble.pos.z = outer2; marble.vel.z *= -0.6; }
         }
       }
 
