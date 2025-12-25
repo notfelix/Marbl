@@ -1034,6 +1034,11 @@
                 }
               } else {
                 // Rewinding past collection - flag for updateWildOrbs to calculate position
+                // Start lerp if this is the first frame past collection
+                if (!orbs[i]._rewindPastCollection) {
+                  orbs[i]._rewindLerpStart = { x: orbs[i].pos.x, y: orbs[i].pos.y, z: orbs[i].pos.z };
+                  orbs[i]._rewindLerpProgress = 0;
+                }
                 orbs[i]._rewindPastCollection = true;
               }
               orbs[i].vel = { x: 0, y: 0, z: 0 };
@@ -1369,9 +1374,25 @@
           const angle = orb.orbitPhase ?? 0;
           const bob = Math.sin(orbAnimTime * 2 + (orb.seed || 0)) * 2;
 
-          orb.pos.x = marble.pos.x + Math.cos(angle) * radius;
-          orb.pos.z = marble.pos.z + Math.sin(angle) * radius;
-          orb.pos.y = (marble.y - renderLevelY) + height + bob;
+          // Target position (where the orb should be relative to marble)
+          const targetX = marble.pos.x + Math.cos(angle) * radius;
+          const targetZ = marble.pos.z + Math.sin(angle) * radius;
+          const targetY = (marble.y - renderLevelY) + height + bob;
+
+          // Lerp from saved start position to target
+          const lerpSpeed = 1; // Adjust for faster/slower transition
+          orb._rewindLerpProgress = Math.min(1, (orb._rewindLerpProgress ?? 0) + dt * lerpSpeed);
+          const t = smoothstep01(orb._rewindLerpProgress);
+
+          if (orb._rewindLerpStart && t < 1) {
+            orb.pos.x = orb._rewindLerpStart.x + (targetX - orb._rewindLerpStart.x) * t;
+            orb.pos.y = orb._rewindLerpStart.y + (targetY - orb._rewindLerpStart.y) * t;
+            orb.pos.z = orb._rewindLerpStart.z + (targetZ - orb._rewindLerpStart.z) * t;
+          } else {
+            orb.pos.x = targetX;
+            orb.pos.y = targetY;
+            orb.pos.z = targetZ;
+          }
           orb.followStart = { x: orb.pos.x, y: orb.pos.y, z: orb.pos.z };
         }
 
