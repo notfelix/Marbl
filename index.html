@@ -858,11 +858,8 @@
     };
     const pedestalFootprint = pedestal.topSize * 0.5 + pedestal.ramp;
     const pedestalGridCount = 3;
-    const pedestalGridSpacing = (() => {
-      const totalPedestalWidth = pedestalFootprint * 2 * pedestalGridCount;
-      const gap = Math.max(0, (Math.min(plane.w, plane.h) - totalPedestalWidth) / (pedestalGridCount + 1));
-      return pedestalFootprint * 2 + gap;
-    })();
+    // Align pedestal spacing to wall grid for symmetric wall contouring
+    const pedestalGridSpacing = WALL_CELL_SIZE * 5; // 287.5 - pedestals at cell boundaries
     const pedestalGrid = {
       count: pedestalGridCount,
       spacing: pedestalGridSpacing
