@@ -1157,6 +1157,9 @@
         const collapse = collapseStateFor(i);
         if (!collapse) continue;
 
+        // Wild pedestals, once opened, always allow passage
+        if (collapse.wild && collapse.started) continue;
+
         const levelY = level.y;
         // Block about a marble's diameter below the hole
         const blockingY = levelY - marble.r * 2;
