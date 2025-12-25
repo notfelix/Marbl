@@ -82,6 +82,38 @@
     <div id="rewind-bar-container"></div>
   </div>
   <script>
+    /*
+     * MARBL - A marble rolling puzzle game with multi-level progression
+     *
+     * GAME CONCEPT:
+     * Roll a marble through levels by tilting the board (WASD/arrows) amd rewind time (spacebar).
+     * Collect orbs to collapse pedestals and reveal holes to the next level. Some orbs and pedestals
+     * are "wild" and persist through time rewind.
+     *
+     * LEVEL STRUCTURE so far (levelConfigs array):
+     * - Level 0 (Blue): 1 pedestal, 1 orb, tutorial
+     * - Level 1 (Red): 2 pedestals, 1 orb, introduces diagonal layout
+     * - Level 2 (Green): 4 pedestals, 2 orbs (1 wild), requires exactly 4 orbs
+     * - Level 3 (Purple): 3 diagonal pedestals, requires exactly 3 orbs
+     * - Level 4 (Gold): 4 pedestals + inner walls, 1 fixed wild orb at center, requires exactly 4 orbs
+     * - Level 5 (Cyan): Final empty level
+     *
+     * KEY SYSTEMS:
+     * - Physics: Tilt-based acceleration, gravity, friction, wall/pedestal collision
+     * - Support system: findSupportSurface/calculateSupport determine what surface the marble is on
+     * - Collapse system: Pedestals collapse when orb requirements met (exactOrbs = no more, no less)
+     * - Rendering: WebGL2 with per-level fade transitions, hole masking in shaders
+     * - History/Rewind: Full state snapshots allow time reversal (wild orbs exempt)
+     *
+     * GEOMETRY:
+     * - Levels are 920 units apart vertically (levelDrop)
+     * - Pedestals: frustum shapes with ramps, arranged in 3x3 grid
+     * - Walls: Hollow frame meshes (createWallFrame) for clean transparency
+     * - Orbs: Spheres with orbiting satellites, follow marble when collected
+     *
+     * COORDINATES: Y is up, levels stack downward (negative Y), camera looks from above
+     */
+
     const starCanvas = document.getElementById('stars');
     const canvas = document.getElementById('c');
     const starCtx = starCanvas.getContext('2d');
