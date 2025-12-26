@@ -312,6 +312,7 @@
      * COORDINATES: Y is up, levels stack downward (negative Y), camera looks from above
      */
 
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     const starCanvas = document.getElementById('stars');
     const canvas = document.getElementById('c');
     const starCtx = starCanvas.getContext('2d');
@@ -516,8 +517,16 @@
     // HiDPI handling
     function resize() {
       const dpr = window.devicePixelRatio || 1;
-      const displayW = 1024;
-      const displayH = 1024;
+      let displayW, displayH;
+      if (isMobile) {
+        // Fill the screen on mobile (use smaller dimension for square)
+        const size = Math.min(window.innerWidth, window.innerHeight);
+        displayW = size;
+        displayH = size;
+      } else {
+        displayW = 1024;
+        displayH = 1024;
+      }
       canvas.style.width = `${displayW}px`;
       canvas.style.height = `${displayH}px`;
       canvas.width = displayW * dpr;
@@ -1083,7 +1092,6 @@
     // ========================================
     // SHADOW MAPPING SETUP
     // ========================================
-    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     const SHADOW_MAP_SIZE = isMobile ? 1024 : 2048;
 
     // Shadow depth shaders (render from light's perspective)
@@ -2915,8 +2923,11 @@
     function boardTransform(offsetY=0, tiltScale=1) {
       let m = mat4Identity();
       m = mat4Translate(m, [0, offsetY, 0]);
-      m = mat4RotateX(m, plane.tilt.y * 0.35 * tiltScale);
-      m = mat4RotateZ(m, plane.tilt.x * 0.35 * tiltScale);
+      // Skip visual tilt on mobile - the phone itself is tilting
+      if (!isMobile) {
+        m = mat4RotateX(m, plane.tilt.y * 0.35 * tiltScale);
+        m = mat4RotateZ(m, plane.tilt.x * 0.35 * tiltScale);
+      }
       return m;
     }
     function boardNormal() {
