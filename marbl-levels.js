@@ -180,7 +180,7 @@ window.marblLevels = [
     "orbs": [
       {
         "type": "fixed",
-        "wild": false,
+        "wild": true,
         "x": 0,
         "z": 0
       }

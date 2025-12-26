@@ -1431,6 +1431,36 @@
     // Import/Export
     // ===========================================
     let savedFileHandle = null;
+
+    // Persist file handle in IndexedDB so we remember the last save location
+    const dbPromise = new Promise((resolve) => {
+      const request = indexedDB.open('marbld', 1);
+      request.onupgradeneeded = () => request.result.createObjectStore('handles');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => resolve(null);
+    });
+
+    async function loadSavedHandle() {
+      const db = await dbPromise;
+      if (!db) return;
+      return new Promise((resolve) => {
+        const tx = db.transaction('handles', 'readonly');
+        const req = tx.objectStore('handles').get('exportFile');
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(null);
+      });
+    }
+
+    async function saveSavedHandle(handle) {
+      const db = await dbPromise;
+      if (!db) return;
+      const tx = db.transaction('handles', 'readwrite');
+      tx.objectStore('handles').put(handle, 'exportFile');
+    }
+
+    // Load saved handle on startup
+    loadSavedHandle().then(handle => { if (handle) savedFileHandle = handle; });
+
     document.getElementById('export-btn').addEventListener('click', async () => {
       const js = 'window.marblLevels = ' + JSON.stringify(levels, null, 2) + ';';
 
@@ -1443,6 +1473,7 @@
             startIn: savedFileHandle ?? 'downloads'
           });
           savedFileHandle = handle;
+          saveSavedHandle(handle);
           const writable = await handle.createWritable();
           await writable.write(js);
           await writable.close();
