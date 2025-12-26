@@ -1073,7 +1073,8 @@
     // ========================================
     // SHADOW MAPPING SETUP
     // ========================================
-    const SHADOW_MAP_SIZE = 2048;
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    const SHADOW_MAP_SIZE = isMobile ? 1024 : 2048;
 
     // Shadow depth shaders (render from light's perspective)
     const shadowVsSource = `
@@ -1329,17 +1330,17 @@
     const orbs = [];
     const keys = new Set();
     // Mobile/gyro state
-    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     let gyroEnabled = false;
     const gyroTilt = { x: 0, y: 0 };
     const gyroSensitivity = 35; // degrees to reach full tilt
     const gyroDeadzone = 2; // degrees
     const history = [];
-    const maxHistoryFrames = 3600; // ~60s at 60fps
+    const maxHistoryFrames = isMobile ? 600 : 3600; // ~10s mobile, ~60s desktop
     const starHistory = [];
     const maxStarHistoryFrames = 180; // ~3s at 60fps for accurate star reversal
     let starsReversed = false;
-    const rewindSpeed = 1.5;
+    const rewindSpeed = isMobile ? 2.0 : 1.5;
+    let historyFrameCounter = 0;
     let rewindAccumulator = 0;
     const orbCollectionDim = { maxCount: 4, minBrightness: 0.3 }; // adjust minBrightness to change how dim orbs get at full collection
     let orbAnimTime = 0;
@@ -1546,6 +1547,11 @@
     }
 
     function pushHistory() {
+      // On mobile, only record every 2nd frame to reduce memory pressure
+      if (isMobile) {
+        historyFrameCounter++;
+        if (historyFrameCounter % 2 !== 0) return;
+      }
       history.push(captureState());
       if (history.length > maxHistoryFrames) history.shift();
       // Separate star history with shorter duration
