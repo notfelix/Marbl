@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Marbl (WebGL)</title>
   <script src="marbl-levels.js" onerror=""></script>
   <style>
@@ -166,11 +166,91 @@
       font-size: 0.85rem;
       margin-top: 1rem;
     }
+    /* Mobile support */
+    #c {
+      touch-action: none;
+    }
+    body {
+      overscroll-behavior: none;
+    }
+    @media (max-width: 1100px) {
+      #c {
+        width: 100vw !important;
+        height: 100vw !important;
+        max-height: 100dvh !important;
+        max-width: 100dvh !important;
+      }
+      #rewind-bar-container {
+        display: none !important;
+      }
+      #game-container {
+        width: 100vw;
+        max-width: 100dvh;
+        margin: 0 auto;
+      }
+      body {
+        height: 100dvh;
+        overflow: hidden;
+        place-items: center;
+      }
+    }
+    /* Mobile start overlay for gyro permission */
+    #mobile-start-overlay {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 99;
+      background: radial-gradient(circle at 30% 20%, rgba(12, 18, 36, 0.98) 0%, rgba(5, 9, 21, 0.99) 55%);
+    }
+    #mobile-start-overlay.hidden {
+      display: none;
+    }
+    #mobile-start-overlay h2 {
+      font-size: 1.8rem;
+      font-weight: 300;
+      letter-spacing: 0.15em;
+      margin-bottom: 1rem;
+      background: linear-gradient(135deg, #6ea8fe 0%, #a78bfa 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    #mobile-start-overlay p {
+      font-size: 0.9rem;
+      color: rgba(229, 236, 255, 0.6);
+      margin-bottom: 2rem;
+      text-align: center;
+      max-width: 300px;
+      line-height: 1.6;
+    }
+    #mobile-start-btn {
+      padding: 1rem 3rem;
+      font-size: 1.2rem;
+      font-weight: 500;
+      color: #e5ecff;
+      background: linear-gradient(135deg, rgba(110, 168, 254, 0.3) 0%, rgba(167, 139, 250, 0.3) 100%);
+      border: 2px solid rgba(110, 168, 254, 0.5);
+      border-radius: 12px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    #mobile-start-btn:active {
+      background: linear-gradient(135deg, rgba(110, 168, 254, 0.5) 0%, rgba(167, 139, 250, 0.5) 100%);
+      transform: scale(0.98);
+    }
   </style>
 </head>
 <body>
   <canvas id="stars"></canvas>
-  <div class="hud">WASD to tilt<br>SPACE to rewind</div>
+  <div class="hud" id="hud">WASD to tilt<br>SPACE to rewind</div>
+  <div id="mobile-start-overlay" class="hidden">
+    <h2>MARBL</h2>
+    <p>Tilt your device to roll the marble.<br>Tap anywhere to rewind time.</p>
+    <button id="mobile-start-btn">Start Game</button>
+  </div>
   <div id="game-container">
     <canvas id="c" width="1024" height="1024"></canvas>
     <div id="rewind-bar-container"></div>
@@ -1248,6 +1328,12 @@
     const followingOrbLift = orbConfig.r * 0.5;
     const orbs = [];
     const keys = new Set();
+    // Mobile/gyro state
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    let gyroEnabled = false;
+    const gyroTilt = { x: 0, y: 0 };
+    const gyroSensitivity = 35; // degrees to reach full tilt
+    const gyroDeadzone = 2; // degrees
     const history = [];
     const maxHistoryFrames = 3600; // ~60s at 60fps
     const starHistory = [];
@@ -2469,11 +2555,18 @@
       const target = plane.targetTilt;
       target.x = 0;
       target.y = 0;
-      // Swap left/right so A tilts left, D tilts right
-      if (keys.has('KeyA')) target.x -= 1;
-      if (keys.has('KeyD')) target.x += 1;
-      if (keys.has('KeyW')) target.y += 1;
-      if (keys.has('KeyS')) target.y -= 1;
+
+      // Use gyro input on mobile, keyboard on desktop
+      if (gyroEnabled) {
+        target.x = gyroTilt.x;
+        target.y = gyroTilt.y;
+      } else {
+        // Swap left/right so A tilts left, D tilts right
+        if (keys.has('KeyA')) target.x -= 1;
+        if (keys.has('KeyD')) target.x += 1;
+        if (keys.has('KeyW')) target.y += 1;
+        if (keys.has('KeyS')) target.y -= 1;
+      }
       if (keys.has('Space')) return; // Freeze input accumulation while rewinding
 
       // Calculate target supportTilt, then smooth it to prevent wobble on landing
@@ -3226,6 +3319,86 @@
       canvas.addEventListener('pointerup', stopAttractor);
       canvas.addEventListener('pointercancel', stopAttractor);
       canvas.addEventListener('pointerleave', () => { mouseAttractor.active = false; });
+
+      // Mobile touch-to-rewind (tap anywhere on canvas)
+      if (isMobile) {
+        canvas.addEventListener('touchstart', (e) => {
+          e.preventDefault();
+          keys.add('Space');
+        }, { passive: false });
+        canvas.addEventListener('touchend', (e) => {
+          e.preventDefault();
+          keys.delete('Space');
+        }, { passive: false });
+        canvas.addEventListener('touchcancel', () => {
+          keys.delete('Space');
+        });
+      }
+    }
+
+    // Mobile gyroscope setup
+    function setupMobileGyro() {
+      window.addEventListener('deviceorientation', (e) => {
+        if (!gyroEnabled) return;
+        // gamma = left/right tilt (-90 to 90)
+        // beta = front/back tilt (-180 to 180), ~45 when holding phone naturally
+        let gamma = e.gamma || 0;
+        let beta = e.beta || 0; // phone held parallel to ground
+
+        // Apply deadzone
+        if (Math.abs(gamma) < gyroDeadzone) gamma = 0;
+        if (Math.abs(beta) < gyroDeadzone) beta = 0;
+
+        // Map to -1 to 1 range with sensitivity (negated for natural feel)
+        gyroTilt.x = Math.max(-1, Math.min(1, gamma / gyroSensitivity));
+        gyroTilt.y = Math.max(-1, Math.min(1, -beta / gyroSensitivity));
+      }, true);
+    }
+
+    async function requestGyroPermission() {
+      // iOS 13+ requires explicit permission request
+      if (typeof DeviceOrientationEvent !== 'undefined' &&
+          typeof DeviceOrientationEvent.requestPermission === 'function') {
+        try {
+          const permission = await DeviceOrientationEvent.requestPermission();
+          return permission === 'granted';
+        } catch (err) {
+          console.error('Gyro permission error:', err);
+          return false;
+        }
+      }
+      // Non-iOS or older iOS - permission not required
+      return true;
+    }
+
+    function showMobileOverlay() {
+      const overlay = document.getElementById('mobile-start-overlay');
+      overlay.classList.remove('hidden');
+    }
+
+    function hideMobileOverlay() {
+      const overlay = document.getElementById('mobile-start-overlay');
+      overlay.classList.add('hidden');
+    }
+
+    function setupMobileStartButton() {
+      const btn = document.getElementById('mobile-start-btn');
+      const hud = document.getElementById('hud');
+
+      btn.addEventListener('click', async () => {
+        const granted = await requestGyroPermission();
+        if (granted) {
+          gyroEnabled = true;
+          setupMobileGyro();
+          hideMobileOverlay();
+          // Update HUD for mobile
+          hud.innerHTML = 'Tilt to roll<br>Tap to rewind';
+        } else {
+          // Fallback: still allow playing without gyro
+          hideMobileOverlay();
+          hud.innerHTML = 'Gyro denied - tap to rewind';
+        }
+      });
     }
 
     // ===========================================
@@ -3531,6 +3704,10 @@
         reloadWithConfigs(loadedLevels);
         hideLevelPicker();
         setupInput();
+        if (isMobile) {
+          setupMobileStartButton();
+          showMobileOverlay();
+        }
         resumeLoop();
       } catch (e) {
         console.error('Error loading levels:', e);
@@ -3587,6 +3764,10 @@
       reloadWithConfigs(window.marblLevels);
       hideLevelPicker();
       setupInput();
+      if (isMobile) {
+        setupMobileStartButton();
+        showMobileOverlay();
+      }
       resumeLoop();
     } else if (!isEmbedded) {
       // Show level picker only in standalone mode (not embedded in MarbLD)
