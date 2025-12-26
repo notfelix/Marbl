@@ -2344,33 +2344,29 @@
       ]);
     }
 
-    function calculateLightSpaceMatrix(marblePos, marbleY, levelY) {
-      // Shadow light direction in screen coordinates (matching camera's top-down view):
-      //   right: positive = light comes from right (shadow falls left)
-      //   up:    positive = light comes from top of screen (shadow falls down)
-      //   height: how high above the scene (affects shadow length)
-      const right = 0.4;   // Light from right side
-      const up = 0.3;      // Light from top of screen
-      const height = 1.0;  // Light height above scene
+    function calculateLightSpaceMatrix() {
+      // Shadow light position in screen coordinates (top-down camera view):
+      //   right:  positive = light from right (shadow falls left)
+      //   up:     positive = light from top of screen (shadow falls toward bottom)
+      //   height: light height above scene (affects shadow length)
+      const right = 0.4;
+      const up = 0.3;
+      const height = 1.0;
 
       const lightDistance = 2000;
-      // Scene coordinates: Y is vertical (up), X is right, Z is toward camera bottom
-      // Camera looks down Y axis with Z as screen-up
       const lightPos = {
-        x: right * lightDistance,     // +X = right on screen
-        y: height * lightDistance,    // +Y = above scene
-        z: up * lightDistance         // +Z = up on screen (toward 12 o'clock)
+        x: right * lightDistance,
+        y: height * lightDistance,
+        z: up * lightDistance
       };
       const lightTarget = { x: 0, y: 0, z: 0 };
 
-      // Use same up vector as camera for consistent orientation
-      const lightView = mat4LookAt(lightPos, lightTarget, { x: -1, y: 0, z: 10 });
+      // Up vector tilted to match desired shadow orientation
+      const lightView = mat4LookAt(lightPos, lightTarget, { x: -0.1, y: 0, z: 1 });
 
-      // Larger ortho bounds to prevent clipping at steep angles
       const orthoSize = 1200;
       const lightProj = mat4Ortho(-orthoSize, orthoSize, -orthoSize, orthoSize, 1, lightDistance * 3);
 
-      // Combine into light space matrix
       return mat4Multiply(lightProj, lightView);
     }
 
@@ -2388,8 +2384,8 @@
       // Use shadow program
       gl.useProgram(shadowProgram);
 
-      // Calculate light space matrix centered on marble
-      lightSpaceMatrix = calculateLightSpaceMatrix(marble.pos, marble.y, levelY);
+      // Calculate light space matrix
+      lightSpaceMatrix = calculateLightSpaceMatrix();
 
       // Create shadow VAO for marble (reuses marble geometry)
       gl.bindVertexArray(meshes.marble.vao);
