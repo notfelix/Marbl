@@ -86,6 +86,86 @@
       transform: scale(0.7);
       transform-origin: top center;
     }
+    /* Level picker overlay */
+    #level-picker {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      background: radial-gradient(circle at 30% 20%, rgba(12, 18, 36, 0.95) 0%, rgba(5, 9, 21, 0.98) 55%);
+    }
+    #level-picker.hidden {
+      display: none;
+    }
+    #level-picker h1 {
+      font-size: 2.5rem;
+      font-weight: 300;
+      letter-spacing: 0.2em;
+      margin-bottom: 0.5rem;
+      background: linear-gradient(135deg, #6ea8fe 0%, #a78bfa 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    #level-picker p {
+      font-size: 0.95rem;
+      color: rgba(229, 236, 255, 0.6);
+      margin-bottom: 2rem;
+      text-align: center;
+      max-width: 400px;
+      line-height: 1.6;
+    }
+    #level-picker .picker-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+      padding: 2rem 3rem;
+      border: 2px dashed rgba(110, 168, 254, 0.3);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.02);
+      transition: all 0.2s ease;
+    }
+    #level-picker .picker-box:hover,
+    #level-picker .picker-box.dragover {
+      border-color: rgba(110, 168, 254, 0.6);
+      background: rgba(110, 168, 254, 0.05);
+    }
+    #level-picker .picker-box svg {
+      width: 48px;
+      height: 48px;
+      stroke: rgba(110, 168, 254, 0.5);
+    }
+    #level-picker .picker-box span {
+      color: rgba(229, 236, 255, 0.5);
+      font-size: 0.9rem;
+    }
+    #level-picker button {
+      padding: 0.75rem 2rem;
+      font-size: 1rem;
+      font-weight: 500;
+      color: #e5ecff;
+      background: linear-gradient(135deg, rgba(110, 168, 254, 0.2) 0%, rgba(167, 139, 250, 0.2) 100%);
+      border: 1px solid rgba(110, 168, 254, 0.3);
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    #level-picker button:hover {
+      background: linear-gradient(135deg, rgba(110, 168, 254, 0.3) 0%, rgba(167, 139, 250, 0.3) 100%);
+      border-color: rgba(110, 168, 254, 0.5);
+    }
+    #level-picker input[type="file"] {
+      display: none;
+    }
+    #level-picker .error {
+      color: #f87171;
+      font-size: 0.85rem;
+      margin-top: 1rem;
+    }
   </style>
 </head>
 <body>
@@ -95,22 +175,34 @@
     <canvas id="c" width="1024" height="1024"></canvas>
     <div id="rewind-bar-container"></div>
   </div>
+  <div id="level-picker">
+    <h1>MARBL</h1>
+    <p>No levels found. Load a level file to start playing, or place <code>marbl-levels.js</code> in the same directory.</p>
+    <div class="picker-box">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/>
+        <line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      <span>Drag &amp; drop a .js level file here</span>
+      <span>or</span>
+      <button id="level-picker-btn">Choose File</button>
+      <input type="file" id="level-file-input" accept=".js">
+    </div>
+    <div id="level-picker-error" class="error"></div>
+  </div>
   <script>
     /*
      * MARBL - A marble rolling puzzle game with multi-level progression
      *
      * GAME CONCEPT:
-     * Roll a marble through levels by tilting the board (WASD/arrows) amd rewind time (spacebar).
+     * Roll a marble through levels by tilting the board (WASD/arrows) and rewind time (spacebar).
      * Collect orbs to collapse pedestals and reveal holes to the next level. Some orbs and pedestals
      * are "wild" and persist through time rewind.
      *
-     * LEVEL STRUCTURE so far (levelConfigs array):
-     * - Level 0 (Blue): 1 pedestal, 1 orb, tutorial
-     * - Level 1 (Red): 2 pedestals, 1 orb, introduces diagonal layout
-     * - Level 2 (Green): 4 pedestals, 2 orbs (1 wild), requires exactly 4 orbs
-     * - Level 3 (Purple): 3 diagonal pedestals, requires exactly 3 orbs
-     * - Level 4 (Gold): 4 pedestals + inner walls, 1 fixed wild orb at center, requires exactly 4 orbs
-     * - Level 5 (Cyan): Final empty level
+     * LEVEL LOADING:
+     * Levels are loaded externally from marbl-levels.js (auto-loaded if present) or via file picker.
+     * See marbl-levels.js for the level configuration format.
      *
      * KEY SYSTEMS:
      * - Physics: Tilt-based acceleration, gravity, friction, wall/pedestal collision
@@ -908,96 +1000,9 @@
     const centralHoleSoftness = pedestal.ramp * 0.35;
 
     // ===========================================
-    // LEVEL CONFIGURATION - Add new levels here!
+    // LEVEL CONFIGURATION - Loaded from external JS file
     // ===========================================
-    let levelConfigs = [
-      {
-        // Level 0 - Blue
-        hasHole: true,
-        pedestals: [centralPedestalIndex],
-        colors: {
-          floor: [0.07, 0.28, 0.7],
-          wall: [0.08, 0.22, 0.6],
-          pedestal: [0.1, 0.35, 0.8],
-          pedestalHole: [0.05, 0.18, 0.5]
-        },
-        orbCount: 1,
-        orbsToCollapse: 1,
-        wild: false
-      },
-      {
-        // Level 1 - Red
-        hasHole: true,
-        pedestals: [topLeftPedestalIndex, bottomRightPedestalIndex],
-        colors: {
-          floor: [0.78, 0.32, 0.34],
-          wall: [0.78, 0.32, 0.34],
-          pedestal: [0.78, 0.32, 0.34],
-          pedestalHole: [0.78, 0.32, 0.34]
-        },
-        orbCount: 1,
-        orbsToCollapse: 2,
-        wild: false
-      },
-      {
-        // Level 2 - Green
-        hasHole: true,
-        pedestals: [topLeftPedestalIndex, topRightPedestalIndex, bottomLeftPedestalIndex, bottomRightPedestalIndex],
-        colors: {
-          floor: [0.18, 0.58, 0.32],
-          wall: [0.16, 0.48, 0.26],
-          pedestal: [0.22, 0.68, 0.36],
-          pedestalHole: [0.12, 0.42, 0.24]
-        },
-        orbCount: 2,
-        orbsToCollapse: 4,
-        wild: true
-      },
-      {
-        // Level 3 - Purple (diagonal pedestals, requires exactly 3 orbs)
-        hasHole: true,
-        pedestals: [0, 4, 8],
-        colors: {
-          floor: [0.55, 0.35, 0.65],
-          wall: [0.45, 0.28, 0.55],
-          pedestal: [0.62, 0.42, 0.72],
-          pedestalHole: [0.38, 0.22, 0.48]
-        },
-        orbCount: 0,
-        orbsToCollapse: 3,
-        wild: false
-      },
-      {
-        // Level 4 - Gold (4 pedestals, fixed wild orb in center, requires exactly 4 orbs)
-        hasHole: true,
-        pedestals: [topLeftPedestalIndex, topRightPedestalIndex, bottomLeftPedestalIndex, bottomRightPedestalIndex],
-        colors: {
-          floor: [0.75, 0.5, 0.15],
-          wall: [0.65, 0.43, 0.12],
-          pedestal: [0.85, 0.57, 0.18],
-          pedestalHole: [0.55, 0.36, 0.1]
-        },
-        orbCount: 1,
-        orbsToCollapse: 4,
-        wild: false,
-        fixedOrb: { x: 0, z: 0, wild: true }, // wild orb in the center
-        innerWall: { enabled: true, position: null, halfWidth: null, height: null } // uses default calculated values
-      },
-      {
-        // Level 5 - Cyan/Teal final level (blank)
-        hasHole: false,
-        pedestals: [],
-        colors: {
-          floor: [0.15, 0.55, 0.65],
-          wall: [0.12, 0.45, 0.55],
-          pedestal: [0.18, 0.62, 0.72],
-          pedestalHole: [0.1, 0.38, 0.48]
-        },
-        orbCount: 0,
-        orbsToCollapse: null, // final level
-        wild: false
-      }
-    ];
+    let levelConfigs = [];
 
     // Default inner wall dimensions (calculated from game geometry)
     const defaultInnerWall = {
@@ -3148,24 +3153,112 @@
       getLevelConfigs: () => levelConfigs
     };
 
+    // ===========================================
+    // LEVEL PICKER - File loading UI
+    // ===========================================
+    const levelPicker = document.getElementById('level-picker');
+    const levelPickerBtn = document.getElementById('level-picker-btn');
+    const levelFileInput = document.getElementById('level-file-input');
+    const levelPickerError = document.getElementById('level-picker-error');
+    const pickerBox = levelPicker.querySelector('.picker-box');
+
+    function showLevelPicker() {
+      levelPicker.classList.remove('hidden');
+      stopLoop();
+    }
+
+    function hideLevelPicker() {
+      levelPicker.classList.add('hidden');
+    }
+
+    function showPickerError(message) {
+      levelPickerError.textContent = message;
+    }
+
+    function clearPickerError() {
+      levelPickerError.textContent = '';
+    }
+
+    function loadLevelsFromText(jsText, filename = 'levels') {
+      clearPickerError();
+      try {
+        // Create a sandboxed function that captures marblLevels
+        const sandbox = {};
+        const fn = new Function('window', jsText + '\nreturn typeof marblLevels !== "undefined" ? marblLevels : null;');
+        const loadedLevels = fn(sandbox);
+
+        if (!loadedLevels || !Array.isArray(loadedLevels) || loadedLevels.length === 0) {
+          throw new Error('No valid marblLevels array found in file');
+        }
+
+        console.log('Loading', loadedLevels.length, 'levels from', filename);
+        reloadWithConfigs(loadedLevels);
+        hideLevelPicker();
+        setupInput();
+        resumeLoop();
+      } catch (e) {
+        console.error('Error loading levels:', e);
+        showPickerError('Error loading file: ' + e.message);
+      }
+    }
+
+    function handleFileSelect(file) {
+      if (!file) return;
+      if (!file.name.endsWith('.js')) {
+        showPickerError('Please select a .js file');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        loadLevelsFromText(e.target.result, file.name);
+      };
+      reader.onerror = () => {
+        showPickerError('Error reading file');
+      };
+      reader.readAsText(file);
+    }
+
+    // File picker button
+    levelPickerBtn.addEventListener('click', () => {
+      levelFileInput.click();
+    });
+
+    levelFileInput.addEventListener('change', (e) => {
+      handleFileSelect(e.target.files[0]);
+    });
+
+    // Drag and drop
+    pickerBox.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      pickerBox.classList.add('dragover');
+    });
+
+    pickerBox.addEventListener('dragleave', () => {
+      pickerBox.classList.remove('dragover');
+    });
+
+    pickerBox.addEventListener('drop', (e) => {
+      e.preventDefault();
+      pickerBox.classList.remove('dragover');
+      const file = e.dataTransfer.files[0];
+      handleFileSelect(file);
+    });
+
     // Auto-load levels from marbl-levels.js if it exists
     const hasExternalLevels = window.marblLevels && Array.isArray(window.marblLevels) && window.marblLevels.length > 0;
     if (hasExternalLevels) {
       console.log('Loading', window.marblLevels.length, 'levels from marbl-levels.js');
       reloadWithConfigs(window.marblLevels);
+      hideLevelPicker();
+      setupInput();
+      resumeLoop();
+    } else if (!isEmbedded) {
+      // Show level picker only in standalone mode (not embedded in MarbLD)
+      showLevelPicker();
+    } else {
+      // In embedded mode, wait for levels from parent
+      hideLevelPicker();
     }
-
-    // Initial setup (skip if external levels loaded - reloadWithConfigs handles it)
-    if (!hasExternalLevels) {
-      marble.y = levelHeightAt(levels[0], marble.pos.x, marble.pos.z) + marble.r;
-      refreshSupport();
-      for (let i = 0; i < levels.length; i++) {
-        spawnOrbsForLevel(i);
-      }
-      pushHistory();
-    }
-    setupInput();
-    resumeLoop();
 
     // Watchdog: ensure animation loop keeps running in embedded mode
     if (isEmbedded) {
