@@ -3394,10 +3394,15 @@
       // Mobile touch-to-rewind (tap anywhere on screen)
       if (isMobile) {
         document.addEventListener('touchstart', (e) => {
+          // Allow buttons and interactive elements to work normally
+          if (e.target.closest('button, a, input, #mobile-overlay, #level-picker')) return;
+          if (paused) return;
           e.preventDefault();
           keys.add('Space');
         }, { passive: false });
         document.addEventListener('touchend', (e) => {
+          if (e.target.closest('button, a, input, #mobile-overlay, #level-picker')) return;
+          if (paused) return;
           e.preventDefault();
           keys.delete('Space');
         }, { passive: false });
