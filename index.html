@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Marbl (WebGL)</title>
+  <script src="marbl-levels.js" onerror=""></script>
   <style>
     :root {
       --bg: #050915;
@@ -3147,13 +3148,22 @@
       getLevelConfigs: () => levelConfigs
     };
 
-    // Initial setup
-    marble.y = levelHeightAt(levels[0], marble.pos.x, marble.pos.z) + marble.r;
-    refreshSupport();
-    for (let i = 0; i < levels.length; i++) {
-      spawnOrbsForLevel(i);
+    // Auto-load levels from marbl-levels.js if it exists
+    const hasExternalLevels = window.marblLevels && Array.isArray(window.marblLevels) && window.marblLevels.length > 0;
+    if (hasExternalLevels) {
+      console.log('Loading', window.marblLevels.length, 'levels from marbl-levels.js');
+      reloadWithConfigs(window.marblLevels);
     }
-    pushHistory();
+
+    // Initial setup (skip if external levels loaded - reloadWithConfigs handles it)
+    if (!hasExternalLevels) {
+      marble.y = levelHeightAt(levels[0], marble.pos.x, marble.pos.z) + marble.r;
+      refreshSupport();
+      for (let i = 0; i < levels.length; i++) {
+        spawnOrbsForLevel(i);
+      }
+      pushHistory();
+    }
     setupInput();
     resumeLoop();
 

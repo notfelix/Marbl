@@ -592,7 +592,7 @@
 
   </div>
 
-  <input type="file" id="import-file" accept=".json" style="display: none;">
+  <input type="file" id="import-file" accept=".json,.js" style="display: none;">
   <input type="color" id="color-picker-hidden" style="display: none;">
 
   <script>
@@ -1386,12 +1386,12 @@
     // Import/Export
     // ===========================================
     document.getElementById('export-btn').addEventListener('click', () => {
-      const json = JSON.stringify(levels, null, 2);
-      const blob = new Blob([json], { type: 'application/json' });
+      const js = 'window.marblLevels = ' + JSON.stringify(levels, null, 2) + ';';
+      const blob = new Blob([js], { type: 'application/javascript' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'marbl-levels.json';
+      a.download = 'marbl-levels.js';
       a.click();
       URL.revokeObjectURL(url);
     });
@@ -1406,7 +1406,12 @@
       const reader = new FileReader();
       reader.onload = (event) => {
         try {
-          const imported = JSON.parse(event.target.result);
+          let content = event.target.result;
+          // Handle .js format (window.marblLevels = [...];)
+          if (content.trim().startsWith('window.marblLevels')) {
+            content = content.replace(/^window\.marblLevels\s*=\s*/, '').replace(/;\s*$/, '');
+          }
+          const imported = JSON.parse(content);
           if (Array.isArray(imported) && imported.length > 0) {
             levels = imported;
             renderLevelList();
@@ -1414,7 +1419,7 @@
             applyToGame();
           }
         } catch (err) {
-          alert('Failed to parse JSON: ' + err.message);
+          alert('Failed to parse levels: ' + err.message);
         }
       };
       reader.readAsText(file);
