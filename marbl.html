@@ -3056,7 +3056,7 @@
     }
 
     const FIXED_DT = 1/60;  // Fixed 60Hz physics timestep
-    let physicsAccumulator = 0;
+    let physicsAccumulator = FIXED_DT;  // Start with one step ready
 
     function frame(time) {
       try {
@@ -3112,8 +3112,10 @@
 
       // Update rewind bar
       updateRewindBar();
+      // For rendering interpolation, use capped delta
+      const dt = Math.min(delta, 0.1);
       // Camera uses actual delta for smooth interpolation
-      updateCamera(Math.min(delta, 0.1));
+      updateCamera(dt);
       drawStars();
       updateLightsUniforms();
 
