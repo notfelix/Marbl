@@ -1862,51 +1862,63 @@
       gl.uniform3fv(uniforms.pointColor, colors);
     }
 
-    function spawnOrbsForLevel(levelIndex=0) {
+    function spawnOrbsForLevel(levelIndex=0, savedOrbs=[]) {
       const level = levels[levelIndex] || levels[0];
       const levelCfg = levelConfigs[levelIndex];
       const margin = marble.r + orbConfig.r * 2 + 20;
       const centerGuard = orbConfig.minCenterDistance;
+      let savedOrbIndex = 0; // Track which saved orb to use next
       function randomPos() {
         return {
           x: (Math.random() * 2 - 1) * (plane.w / 2 - margin),
           z: (Math.random() * 2 - 1) * (plane.h / 2 - margin)
         };
       }
-      function createOrb(p, isWild) {
+      function createOrb(p, isWild, savedOrb=null) {
         const yLocal = (levelHeightAt(level, p.x, p.z) - level.y) + orbConfig.r;
-        const seed = Math.random() * Math.PI * 2;
-        const sats=[];
-        for(let k=0;k<(orbConfig.satelliteCount || 1);k++){
-          // random axis
-          let ax=Math.random()*2-1, ay=Math.random()*2-1, az=Math.random()*2-1;
-          const axisLen=Math.hypot(ax,ay,az)||1;
-          ax/=axisLen; ay/=axisLen; az/=axisLen;
-          // base direction orthogonal to axis
-          let bx=ay, by=-ax, bz=0;
-          if(Math.hypot(bx,by,bz)<1e-3){bx=0; by=az; bz=-ay;}
-          const bl=Math.hypot(bx,by,bz)||1;
-          bx/=bl; by/=bl; bz/=bl;
-          const radius=orbConfig.r*(1.6+Math.random()*0.5);
-          const speed=1.4+Math.random()*0.8;
-          const phase=Math.random()*Math.PI*2;
-          sats.push({axis:{x:ax,y:ay,z:az}, base:{x:bx*radius,y:by*radius,z:bz*radius}, speed, phase});
+        // Reuse saved orb properties if available, otherwise generate new random ones
+        let seed, sats, orbitPhase, orbitRadius, orbitHeight, orbitSpeed;
+        if (savedOrb) {
+          seed = savedOrb.seed;
+          sats = savedOrb.sats;
+          orbitPhase = savedOrb.orbitPhase;
+          orbitRadius = savedOrb.orbitRadius;
+          orbitHeight = savedOrb.orbitHeight;
+          orbitSpeed = savedOrb.orbitSpeed;
+        } else {
+          seed = Math.random() * Math.PI * 2;
+          sats=[];
+          for(let k=0;k<(orbConfig.satelliteCount || 1);k++){
+            // random axis
+            let ax=Math.random()*2-1, ay=Math.random()*2-1, az=Math.random()*2-1;
+            const axisLen=Math.hypot(ax,ay,az)||1;
+            ax/=axisLen; ay/=axisLen; az/=axisLen;
+            // base direction orthogonal to axis
+            let bx=ay, by=-ax, bz=0;
+            if(Math.hypot(bx,by,bz)<1e-3){bx=0; by=az; bz=-ay;}
+            const bl=Math.hypot(bx,by,bz)||1;
+            bx/=bl; by/=bl; bz/=bl;
+            const radius=orbConfig.r*(1.6+Math.random()*0.5);
+            const speed=1.4+Math.random()*0.8;
+            const phase=Math.random()*Math.PI*2;
+            sats.push({axis:{x:ax,y:ay,z:az}, base:{x:bx*radius,y:by*radius,z:bz*radius}, speed, phase});
+          }
+          orbitPhase = Math.random() * Math.PI * 2;
+          orbitRadius = 36 + Math.random() * 12;
+          orbitHeight = 10 + Math.random() * 5;
+          orbitSpeed = 1 + Math.random() * 0.8;
         }
-        const orbitPhase = Math.random() * Math.PI * 2;
-        const orbitRadius = 36 + Math.random() * 12;
-        const orbitHeight = 10 + Math.random() * 5;
-        const orbitSpeed = 1 + Math.random() * 0.8;
         orbs.push({
           level: levelIndex,
           renderLevel: levelIndex,
           pos: { x: p.x, y: yLocal, z: p.z },
-          collected: false,
+          collected: savedOrb?.collected || false,
           collectFlash: 0,
           following: false,
           followProgress: 1,
           followStart: null,
           vel: { x: 0, y: 0, z: 0 },
-          dissolve: 0,
+          dissolve: savedOrb?.dissolve || 0,
           seed,
           sats,
           orbitPhase,
@@ -1920,25 +1932,31 @@
       // New format: orbs array with type/position/wild per orb
       if (levelCfg.orbs && Array.isArray(levelCfg.orbs)) {
         for (const orbCfg of levelCfg.orbs) {
+          const savedOrb = savedOrbs[savedOrbIndex++]; // Get next saved orb if available
           if (orbCfg.type === 'fixed') {
             // Default x to 250 (outside center guard of 220) if not specified
-            createOrb({ x: orbCfg.x ?? 250, z: orbCfg.z ?? 0 }, orbCfg.wild || false);
+            createOrb({ x: orbCfg.x ?? 250, z: orbCfg.z ?? 0 }, orbCfg.wild || false, savedOrb);
           } else {
-            // Random positioning
-            let attempts = 0;
-            while (attempts < 100) {
-              attempts++;
-              const p = randomPos();
-              if (Math.hypot(p.x, p.z) < centerGuard) continue;
-              let ok = true;
-              for (const o of orbs) {
-                const dx = o.pos.x - p.x;
-                const dz = o.pos.z - p.z;
-                if (Math.hypot(dx, dz) < (orbConfig.r * 2 + 30)) { ok = false; break; }
-              }
-              if (ok) {
-                createOrb(p, orbCfg.wild || false);
-                break;
+            // Random positioning - reuse saved position if available
+            if (savedOrb) {
+              createOrb({ x: savedOrb.x, z: savedOrb.z }, orbCfg.wild || false, savedOrb);
+            } else {
+              // Generate new random position
+              let attempts = 0;
+              while (attempts < 100) {
+                attempts++;
+                const p = randomPos();
+                if (Math.hypot(p.x, p.z) < centerGuard) continue;
+                let ok = true;
+                for (const o of orbs) {
+                  const dx = o.pos.x - p.x;
+                  const dz = o.pos.z - p.z;
+                  if (Math.hypot(dx, dz) < (orbConfig.r * 2 + 30)) { ok = false; break; }
+                }
+                if (ok) {
+                  createOrb(p, orbCfg.wild || false);
+                  break;
+                }
               }
             }
           }
@@ -1948,22 +1966,30 @@
 
       // Legacy format: fixedOrb and orbCount
       if (levelCfg.fixedOrb) {
-        createOrb({ x: levelCfg.fixedOrb.x, z: levelCfg.fixedOrb.z }, levelCfg.fixedOrb.wild);
+        const savedOrb = savedOrbs[savedOrbIndex++];
+        createOrb({ x: levelCfg.fixedOrb.x, z: levelCfg.fixedOrb.z }, levelCfg.fixedOrb.wild, savedOrb);
         return;
       }
       const countForLevel = () => orbs.filter(o => o.level === levelIndex).length;
       const targetCount = levelCfg.orbCount ?? 0;
       while (countForLevel() < targetCount) {
-        const p = randomPos();
-        if (Math.hypot(p.x, p.z) < centerGuard) continue;
-        let ok = true;
-        for (const o of orbs) {
-          const dx = o.pos.x - p.x;
-          const dz = o.pos.z - p.z;
-          if (Math.hypot(dx, dz) < (orbConfig.r * 2 + 30)) { ok = false; break; }
-        }
-        if (ok) {
-          createOrb(p, false);
+        const savedOrb = savedOrbs[savedOrbIndex++];
+        if (savedOrb) {
+          // Reuse saved position
+          createOrb({ x: savedOrb.x, z: savedOrb.z }, false, savedOrb);
+        } else {
+          // Generate new random position
+          const p = randomPos();
+          if (Math.hypot(p.x, p.z) < centerGuard) continue;
+          let ok = true;
+          for (const o of orbs) {
+            const dx = o.pos.x - p.x;
+            const dz = o.pos.z - p.z;
+            if (Math.hypot(dx, dz) < (orbConfig.r * 2 + 30)) { ok = false; break; }
+          }
+          if (ok) {
+            createOrb(p, false);
+          }
         }
       }
     }
@@ -3033,25 +3059,27 @@
             current.progress = saved.progress;
           }
         }
-        // Respawn orbs (preserving collected state where possible)
-        const collectedPositions = orbs
-          .filter(o => o.collected)
-          .map(o => ({ level: o.level, x: Math.round(o.pos.x), z: Math.round(o.pos.z) }));
+        // Save all orb states by level for position preservation
+        const savedOrbsByLevel = {};
+        for (const orb of orbs) {
+          if (!savedOrbsByLevel[orb.level]) savedOrbsByLevel[orb.level] = [];
+          savedOrbsByLevel[orb.level].push({
+            x: orb.pos.x,
+            z: orb.pos.z,
+            wild: orb.wild,
+            collected: orb.collected,
+            dissolve: orb.dissolve,
+            seed: orb.seed,
+            sats: orb.sats,
+            orbitPhase: orb.orbitPhase,
+            orbitRadius: orb.orbitRadius,
+            orbitHeight: orb.orbitHeight,
+            orbitSpeed: orb.orbitSpeed
+          });
+        }
         orbs.length = 0;
         for (let i = 0; i < levels.length; i++) {
-          spawnOrbsForLevel(i);
-        }
-        // Re-mark orbs as collected if they were at same position
-        for (const orb of orbs) {
-          const wasCollected = collectedPositions.some(c =>
-            c.level === orb.level &&
-            Math.abs(c.x - Math.round(orb.pos.x)) < 10 &&
-            Math.abs(c.z - Math.round(orb.pos.z)) < 10
-          );
-          if (wasCollected) {
-            orb.collected = true;
-            orb.dissolve = 1;
-          }
+          spawnOrbsForLevel(i, savedOrbsByLevel[i] || []);
         }
         // Just refresh support without moving marble
         refreshSupport();
