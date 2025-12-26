@@ -66,6 +66,23 @@
       right: 0;
       border-radius: 2px;
     }
+    @media (pointer: coarse) {
+      #rewind-bar-container {
+        /* Horizontal bar above the playing field in portrait */
+        left: 5%;
+        top: 16px;
+        width: 90%;
+        height: 8px;
+        z-index: 10;
+      }
+      #rewind-bar-container .segment {
+        /* Rotate segment positioning for horizontal bar */
+        top: 0;
+        bottom: 0;
+        left: auto;
+        right: auto;
+      }
+    }
     .hud {
       position: absolute;
       top: 16px;
@@ -398,28 +415,44 @@
         rewindBarContainer.appendChild(div);
       }
 
-      // Position segments from bottom to top
+      // Position segments - horizontal on mobile, vertical on desktop
       const totalFrames = maxHistoryFrames;
-      let bottomOffset = 0;
+      let offset = 0;
       for (let i = 0; i < segments.length; i++) {
         const seg = segments[i];
-        const segmentHeight = (seg.count / totalFrames) * 100;
+        const segmentSize = (seg.count / totalFrames) * 100;
         const div = rewindBarContainer.children[i];
-        div.style.bottom = bottomOffset + '%';
-        div.style.height = segmentHeight + '%';
         const currentColor = levelColorsCSS[seg.level] || levelColorsCSS[0];
-
-        // Apply gradient only to the falling portion at the top of the segment
         const nextLevel = seg.level + 1;
-        if (seg.fallFrames > 0 && nextLevel < levelColorsCSS.length) {
-          const nextColor = levelColorsCSS[nextLevel];
-          // Solid portion is the non-falling frames at the bottom
-          const solidPortion = ((seg.count - seg.fallFrames) / seg.count) * 100;
-          div.style.background = `linear-gradient(to top, ${currentColor} ${solidPortion}%, ${nextColor})`;
+
+        if (isMobile) {
+          // Horizontal layout
+          div.style.left = offset + '%';
+          div.style.width = segmentSize + '%';
+          div.style.bottom = '0';
+          div.style.height = '100%';
+          if (seg.fallFrames > 0 && nextLevel < levelColorsCSS.length) {
+            const nextColor = levelColorsCSS[nextLevel];
+            const solidPortion = ((seg.count - seg.fallFrames) / seg.count) * 100;
+            div.style.background = `linear-gradient(to right, ${currentColor} ${solidPortion}%, ${nextColor})`;
+          } else {
+            div.style.background = currentColor;
+          }
         } else {
-          div.style.background = currentColor;
+          // Vertical layout
+          div.style.bottom = offset + '%';
+          div.style.height = segmentSize + '%';
+          div.style.left = '0';
+          div.style.width = '100%';
+          if (seg.fallFrames > 0 && nextLevel < levelColorsCSS.length) {
+            const nextColor = levelColorsCSS[nextLevel];
+            const solidPortion = ((seg.count - seg.fallFrames) / seg.count) * 100;
+            div.style.background = `linear-gradient(to top, ${currentColor} ${solidPortion}%, ${nextColor})`;
+          } else {
+            div.style.background = currentColor;
+          }
         }
-        bottomOffset += segmentHeight;
+        offset += segmentSize;
       }
     }
 
@@ -3358,17 +3391,17 @@
       canvas.addEventListener('pointercancel', stopAttractor);
       canvas.addEventListener('pointerleave', () => { mouseAttractor.active = false; });
 
-      // Mobile touch-to-rewind (tap anywhere on canvas)
+      // Mobile touch-to-rewind (tap anywhere on screen)
       if (isMobile) {
-        canvas.addEventListener('touchstart', (e) => {
+        document.addEventListener('touchstart', (e) => {
           e.preventDefault();
           keys.add('Space');
         }, { passive: false });
-        canvas.addEventListener('touchend', (e) => {
+        document.addEventListener('touchend', (e) => {
           e.preventDefault();
           keys.delete('Space');
         }, { passive: false });
-        canvas.addEventListener('touchcancel', () => {
+        document.addEventListener('touchcancel', () => {
           keys.delete('Space');
         });
         // Prevent magnifying glass / context menu on iOS
