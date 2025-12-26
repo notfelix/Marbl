@@ -2362,7 +2362,7 @@
       const lightTarget = { x: 0, y: 0, z: 0 };
 
       // Up vector tilted to match desired shadow orientation
-      const lightView = mat4LookAt(lightPos, lightTarget, { x: -0.1, y: 0, z: 1 });
+      const lightView = mat4LookAt(lightPos, lightTarget, { x: -0.5, y: 0, z: 1 });
 
       const orthoSize = 1200;
       const lightProj = mat4Ortho(-orthoSize, orthoSize, -orthoSize, orthoSize, 1, lightDistance * 3);
