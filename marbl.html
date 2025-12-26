@@ -45,6 +45,16 @@
       user-select: none;
       -webkit-touch-callout: none;
     }
+    @media (pointer: coarse) {
+      #c {
+        position: fixed;
+        top: 0;
+        left: 0;
+      }
+      #rewind-bar-container {
+        display: none;
+      }
+    }
     #game-container {
       position: relative;
       display: flex;
@@ -519,10 +529,9 @@
       const dpr = window.devicePixelRatio || 1;
       let displayW, displayH;
       if (isMobile) {
-        // Fill the screen on mobile (use smaller dimension for square)
-        const size = Math.min(window.innerWidth, window.innerHeight);
-        displayW = size;
-        displayH = size;
+        // Fill the entire screen on mobile
+        displayW = window.innerWidth;
+        displayH = window.innerHeight;
       } else {
         displayW = 1024;
         displayH = 1024;
