@@ -1388,19 +1388,39 @@
         const gameLevels = gameIframe.contentWindow.marblAPI?.getLevelConfigs();
         if (gameLevels && gameLevels.length > 0) {
           levels = structuredClone(gameLevels);
-          // Migrate old format (orbCount/fixedOrb) to new format (orbs array)
-          levels.forEach(migrateLevelFormat);
-          renderLevelList();
-          if (levels.length > 0) {
-            selectLevel(0);
-          }
+          // Migrate old format and ensure colors are valid
+          levels.forEach(level => {
+            migrateLevelFormat(level);
+            // Validate color values (check for NaN, undefined, or missing properties)
+            const isValidColorArray = (arr) => Array.isArray(arr) && arr.length >= 3 &&
+              arr.every(v => Number.isFinite(v));
+            const needsNewColors = !level.colors ||
+              !isValidColorArray(level.colors.floor) ||
+              !isValidColorArray(level.colors.wall) ||
+              !isValidColorArray(level.colors.pedestal) ||
+              !isValidColorArray(level.colors.pedestalHole);
+            if (needsNewColors) {
+              const hue = suggestNextColor(levels.filter(l => l !== level && l.colors));
+              level.colors = generateHarmoniousColors(hue);
+            }
+          });
+        } else {
+          // Game has no levels, use default template
+          levels = [structuredClone(defaultLevelTemplate)];
         }
+        renderLevelList();
+        if (levels.length > 0) {
+          selectLevel(0);
+        }
+        // Sync levels to game to ensure consistency
+        applyToGame();
       } catch (err) {
         console.warn('Could not load levels from game:', err);
         // Use default if can't load
         levels = [structuredClone(defaultLevelTemplate)];
         renderLevelList();
         selectLevel(0);
+        applyToGame();
       }
     }
 
@@ -1505,12 +1525,29 @@
         try {
           let content = event.target.result;
           // Handle .js format (window.marblLevels = [...];)
-          if (content.trim().startsWith('window.marblLevels')) {
-            content = content.replace(/^window\.marblLevels\s*=\s*/, '').replace(/;\s*$/, '');
+          const trimmed = content.trim();
+          if (trimmed.startsWith('window.marblLevels')) {
+            content = trimmed.replace(/^window\.marblLevels\s*=\s*/, '').replace(/;\s*$/, '');
           }
           const imported = JSON.parse(content);
           if (Array.isArray(imported) && imported.length > 0) {
             levels = imported;
+            // Migrate old format and ensure colors are valid
+            levels.forEach(level => {
+              migrateLevelFormat(level);
+              // Validate color values (check for NaN, undefined, or missing properties)
+              const isValidColorArray = (arr) => Array.isArray(arr) && arr.length >= 3 &&
+                arr.every(v => Number.isFinite(v));
+              const needsNewColors = !level.colors ||
+                !isValidColorArray(level.colors.floor) ||
+                !isValidColorArray(level.colors.wall) ||
+                !isValidColorArray(level.colors.pedestal) ||
+                !isValidColorArray(level.colors.pedestalHole);
+              if (needsNewColors) {
+                const hue = suggestNextColor(levels.filter(l => l !== level && l.colors));
+                level.colors = generateHarmoniousColors(hue);
+              }
+            });
             renderLevelList();
             selectLevel(0);
             applyToGame();

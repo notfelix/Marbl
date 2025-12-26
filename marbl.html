@@ -1000,7 +1000,24 @@
       };
     });
     let pedestalLayouts = levelConfigs.map(cfg => cfg.pedestals.filter(idx => idx >= 0));
-    let boardColors = levelConfigs.map(cfg => cfg.colors);
+    // Default colors for levels missing color data
+    const defaultBoardColors = {
+      floor: [0.3, 0.3, 0.6],
+      wall: [0.25, 0.25, 0.5],
+      pedestal: [0.4, 0.4, 0.7],
+      pedestalHole: [0.2, 0.2, 0.4]
+    };
+    // Ensure each color property exists with fallback to defaults
+    function ensureColors(colors) {
+      if (!colors) return defaultBoardColors;
+      return {
+        floor: colors.floor || defaultBoardColors.floor,
+        wall: colors.wall || defaultBoardColors.wall,
+        pedestal: colors.pedestal || defaultBoardColors.pedestal,
+        pedestalHole: colors.pedestalHole || defaultBoardColors.pedestalHole
+      };
+    }
+    let boardColors = levelConfigs.map(cfg => ensureColors(cfg.colors));
     // A level collapses if it has pedestals; orbs needed = number of pedestals
     let pedestalCollapses = levelConfigs
       .map((cfg, i) => pedestalLayouts[i].length > 0 ? {
@@ -1820,14 +1837,15 @@
         // Transform orb position by board tilt to match floor coordinate space
         const boardM = boardTransform(levelY);
         const transformed = mat4TransformVec4(boardM, [rawX, rawY, rawZ, 1]);
-        positions[count*3+0] = transformed[0];
-        positions[count*3+1] = transformed[1];
-        positions[count*3+2] = transformed[2];
-        intensities[count] = strength;
+        // Validate position values to prevent NaN in shader
+        positions[count*3+0] = Number.isFinite(transformed[0]) ? transformed[0] : 0;
+        positions[count*3+1] = Number.isFinite(transformed[1]) ? transformed[1] : 0;
+        positions[count*3+2] = Number.isFinite(transformed[2]) ? transformed[2] : 0;
+        intensities[count] = Number.isFinite(strength) ? strength : 0;
         // Light color: warm for regular orbs, cycling blue/magenta for wild
         if (orb.wild) {
           const t = time * 0.8 + (orb.seed || 0);
-          const wave = (Math.sin(t * Math.PI * 2) + 1) * 0.5;
+          const wave = Number.isFinite(t) ? (Math.sin(t * Math.PI * 2) + 1) * 0.5 : 0.5;
           colors[count*3+0] = 1.0 + wave * 0.8; // Red: 1.0 to 1.8
           colors[count*3+1] = 0.6;              // More green for brightness
           colors[count*3+2] = 1.8;              // Very strong blue
@@ -2402,9 +2420,27 @@
       gl.bindVertexArray(mesh.vao);
       setMatrices(model);
       gl.uniform3fv(uniforms.lightDir, new Float32Array([lightDir.x, lightDir.y, lightDir.z]));
-      gl.uniform3fv(uniforms.color, new Float32Array(color));
-      gl.uniform3fv(uniforms.ambient, new Float32Array(ambient));
-      gl.uniform1f(uniforms.alpha, alpha);
+      // Validate color array to prevent NaN/undefined issues
+      const safeColor = Array.isArray(color) && color.length >= 3
+        ? [
+            Number.isFinite(color[0]) ? color[0] : 0.3,
+            Number.isFinite(color[1]) ? color[1] : 0.3,
+            Number.isFinite(color[2]) ? color[2] : 0.6
+          ]
+        : [0.3, 0.3, 0.6];
+      gl.uniform3fv(uniforms.color, new Float32Array(safeColor));
+      // Validate ambient array
+      const safeAmbient = Array.isArray(ambient) && ambient.length >= 3
+        ? [
+            Number.isFinite(ambient[0]) ? ambient[0] : 0.05,
+            Number.isFinite(ambient[1]) ? ambient[1] : 0.08,
+            Number.isFinite(ambient[2]) ? ambient[2] : 0.12
+          ]
+        : [0.05, 0.08, 0.12];
+      gl.uniform3fv(uniforms.ambient, new Float32Array(safeAmbient));
+      // Validate alpha
+      const safeAlpha = Number.isFinite(alpha) ? Math.max(0, Math.min(1, alpha)) : 1.0;
+      gl.uniform1f(uniforms.alpha, safeAlpha);
       holeCentersArr.fill(0);
       holeRadiiArr.fill(0);
       holeSoftnessArr.fill(0);
@@ -2546,7 +2582,7 @@
           if (orb.wild) {
             // Cycle between blue and magenta
             const t = orbTime * 0.8 + (orb.seed || 0);
-            const wave = (Math.sin(t * Math.PI * 2) + 1) * 0.5; // 0 to 1
+            const wave = Number.isFinite(t) ? (Math.sin(t * Math.PI * 2) + 1) * 0.5 : 0.5; // 0 to 1
             // Brighter, slightly less saturated (add some green)
             diffuse = [wave * 2.8, 0.4, 2.5];
             ambient = [wave * 0.9, 0.15, 0.9];
@@ -2595,7 +2631,8 @@
         // Only update wild orbs and animation if there's still history to rewind and not blocked
         if (history.length > 1 && !rewindBlocked) {
           updateWildOrbs(dt);
-          orbAnimTime += delta; // Keep animation time advancing for wild orb rainbow effect
+          // Keep animation time advancing for wild orb rainbow effect (ensure finite)
+          if (Number.isFinite(delta)) orbAnimTime += delta;
         }
         // When star history is exhausted, keep stars moving with reversed velocities
         // But freeze everything when main history hits zero or rewind is blocked
@@ -2612,7 +2649,7 @@
         updateInput(dt);
         updatePhysics(dt);
         updateStars(dt);
-        orbAnimTime += delta;
+        if (Number.isFinite(delta)) orbAnimTime += delta;
         pushHistory();
       }
 
@@ -2622,7 +2659,12 @@
       drawStars();
       updateLightsUniforms();
 
+      // Reset WebGL state at start of each frame to recover from any mid-frame errors
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.depthMask(true);
+      gl.depthFunc(gl.LESS);
       gl.enable(gl.DEPTH_TEST);
+      gl.disable(gl.CULL_FACE);
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
@@ -2676,7 +2718,16 @@
 
       for (const entry of boardEntries) {
         const { level, matrix, mask } = entry;
-        const palette = boardColors[level.index] || boardColors[0];
+        // Validate level index and get palette with fallbacks
+        const levelIdx = Number.isFinite(level?.index) ? level.index : 0;
+        const rawPalette = boardColors[levelIdx] || boardColors[0] || defaultBoardColors;
+        // Ensure all palette colors exist
+        const palette = {
+          floor: rawPalette.floor || defaultBoardColors.floor,
+          wall: rawPalette.wall || defaultBoardColors.wall,
+          pedestal: rawPalette.pedestal || defaultBoardColors.pedestal,
+          pedestalHole: rawPalette.pedestalHole || defaultBoardColors.pedestalHole
+        };
         const allowDepthWrite = entry.alpha > 0.001;
         gl.depthMask(allowDepthWrite);
         drawMesh(meshes.floor, matrix, palette.floor, [0.04,0.06,0.1], entry.alpha, level.hasHole ? mask : null);
@@ -2698,16 +2749,19 @@
           let pedM = matrix;
           pedM = mat4Translate(pedM, [pos.x, 0, pos.z]);
           pedM = mat4Scale(pedM, [1, height / pedestal.height, 1]);
+          // Ensure pedestal colors are valid arrays before calculations
+          const safePedestal = Array.isArray(palette.pedestal) ? palette.pedestal : defaultBoardColors.pedestal;
+          const safePedestalHole = Array.isArray(palette.pedestalHole) ? palette.pedestalHole : defaultBoardColors.pedestalHole;
           let pedColor = pedCollapse > 0
-            ? palette.pedestal.map((c, i) => c + (palette.pedestalHole[i] - c) * pedCollapse)
-            : palette.pedestal;
+            ? safePedestal.map((c, i) => (c || 0) + ((safePedestalHole[i] || 0) - (c || 0)) * pedCollapse)
+            : [...safePedestal];
           // Wild pedestals cycle through rainbow colors like wild orbs
           if (isWild) {
             const t = orbAnimTime * 0.8 + idx * 0.5; // offset by pedestal index
-            const wave = (Math.sin(t * Math.PI * 2) + 1) * 0.5;
+            const wave = Number.isFinite(t) ? (Math.sin(t * Math.PI * 2) + 1) * 0.5 : 0.5;
             // Blend from original green to rainbow (blue-magenta cycle)
             const wildColor = [wave * 0.7, 0.3, 0.6 + wave * 0.3];
-            pedColor = pedColor.map((c, i) => c * 0.4 + wildColor[i] * 0.6);
+            pedColor = pedColor.map((c, i) => (c || 0) * 0.4 + wildColor[i] * 0.6);
           }
           if (pedCollapse > 0) gl.depthMask(false); // let the hole reveal the level below while fading
           drawMesh(pedMesh, pedM, pedColor, [0.05,0.06,0.1], pedAlpha);
@@ -2766,7 +2820,13 @@
         if (entry.level.y <= marble.y) continue; // Only floors above the marble
         if (entry.alpha <= 0.001) continue;
         const { level, matrix, mask } = entry;
-        const palette = boardColors[level.index] || boardColors[0];
+        // Validate level index and get palette with fallbacks
+        const levelIdx = Number.isFinite(level?.index) ? level.index : 0;
+        const rawPalette = boardColors[levelIdx] || boardColors[0] || defaultBoardColors;
+        const palette = {
+          floor: rawPalette.floor || defaultBoardColors.floor,
+          wall: rawPalette.wall || defaultBoardColors.wall
+        };
         gl.depthMask(true);
         drawMesh(meshes.floor, matrix, palette.floor, [0.04,0.06,0.1], entry.alpha, level.hasHole ? mask : null);
         const wallColor = palette.wall;
@@ -2884,7 +2944,7 @@
         };
       });
       pedestalLayouts = levelConfigs.map(cfg => cfg.pedestals.filter(idx => idx >= 0));
-      boardColors = levelConfigs.map(cfg => cfg.colors);
+      boardColors = levelConfigs.map(cfg => ensureColors(cfg.colors));
       // A level collapses if it has pedestals; orbs needed = number of pedestals
       pedestalCollapses = levelConfigs
         .map((cfg, i) => pedestalLayouts[i].length > 0 ? {
@@ -2900,8 +2960,8 @@
         .filter(layout => layout.length > 0)
         .map(layout => layout.length);
       // Update CSS colors for rewind bar
-      levelColorsCSS = levelConfigs.map(cfg => {
-        const c = cfg.colors.floor;
+      levelColorsCSS = levelConfigs.map((cfg, i) => {
+        const c = boardColors[i]?.floor || defaultBoardColors.floor;
         return `rgb(${Math.round(c[0]*255)}, ${Math.round(c[1]*255)}, ${Math.round(c[2]*255)})`;
       });
     }
