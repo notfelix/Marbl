@@ -1215,11 +1215,18 @@
               ? totalCollectedAfterRewind === required
               : totalCollectedAfterRewind >= required;
 
-            // If requirement not met, don't restore a more-open state (prevent reopening)
-            if (!meetsRequirement && (c.progress ?? 0) > collapse.progress) {
+            // For exactOrbs pedestals, never restore progress directly during rewind.
+            // Let updateCollapses handle smooth animation based on orb count.
+            // This prevents "popping" when rewinding causes orb count to change.
+            if (collapse.exactOrbs) {
+              // Ensure started is true if there's any progress, so updateCollapses can animate
+              if (collapse.progress > 0 || meetsRequirement) {
+                pedestalCollapses[i].started = true;
+              }
               return;
             }
 
+            // For non-exactOrbs pedestals, restore progress directly (they don't reverse)
             pedestalCollapses[i].started = !!c.started;
             pedestalCollapses[i].progress = c.progress ?? pedestalCollapses[i].progress;
           }
