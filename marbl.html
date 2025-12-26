@@ -1409,6 +1409,7 @@
     const rewindSpeed = isMobile ? 2.0 : 1.5;
     let historyFrameCounter = 0;
     let rewindAccumulator = 0;
+    let rewindBlockedPersist = false;  // Persists blocked state across frames
     const orbCollectionDim = { maxCount: 4, minBrightness: 0.3 }; // adjust minBrightness to change how dim orbs get at full collection
     let orbAnimTime = 0;
     let currentSupport = null;
@@ -3118,6 +3119,8 @@
 
       const rewinding = keys.has('Space');
       if (rewinding) {
+        // Track if rewind is at a limit (use persisted state for blocked, check history for exhausted)
+        let rewindStuck = rewindBlockedPersist || history.length <= 1;
         // Run fixed timestep physics updates
         while (physicsAccumulator >= FIXED_DT) {
           rewindAccumulator += rewindSpeed * FIXED_DT * 60;  // Scale rewind speed to fixed timestep
@@ -3128,7 +3131,14 @@
               rewindBlocked = true;
               rewindAccumulator = 0;
               break;
+            } else {
+              rewindBlockedPersist = false;  // Successfully rewound, not blocked
             }
+          }
+          // Check if rewind is stuck (blocked or buffer exhausted)
+          if (rewindBlocked || history.length <= 1) {
+            rewindStuck = true;
+            rewindBlockedPersist = rewindBlocked;  // Persist blocked state
           }
           refreshSupport();
           updateCollapses(FIXED_DT);
@@ -3140,9 +3150,10 @@
           }
           physicsAccumulator -= FIXED_DT;
         }
-        if (Number.isFinite(delta)) orbAnimTime += delta;
+        if (Number.isFinite(delta) && !rewindStuck) orbAnimTime += delta;
       } else {
         rewindAccumulator = 0;
+        rewindBlockedPersist = false;  // Reset when not rewinding
         // Transition from rewind to forward: un-reverse star velocities
         if (starsReversed) {
           reverseStarVelocities();
