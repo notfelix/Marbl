@@ -45,16 +45,6 @@
       user-select: none;
       -webkit-touch-callout: none;
     }
-    @media (pointer: coarse) {
-      #c {
-        position: fixed;
-        top: 0;
-        left: 0;
-      }
-      #rewind-bar-container {
-        display: none;
-      }
-    }
     #game-container {
       position: relative;
       display: flex;
@@ -529,9 +519,10 @@
       const dpr = window.devicePixelRatio || 1;
       let displayW, displayH;
       if (isMobile) {
-        // Fill the entire screen on mobile
-        displayW = window.innerWidth;
-        displayH = window.innerHeight;
+        // Square canvas filling the smaller screen dimension
+        const size = Math.min(window.innerWidth, window.innerHeight);
+        displayW = size;
+        displayH = size;
       } else {
         displayW = 1024;
         displayH = 1024;
@@ -2500,7 +2491,7 @@
     const camera = {
       pos: { x: 0, y: 1500, z: 1 },
       target: { x: 0, y: 0, z: 0 },
-      baseHeight: 1500,
+      baseHeight: isMobile ? 1150 : 1500,  // Tighter view on mobile
       followRatio: 0.9,
       smooth: 2.6
     };
