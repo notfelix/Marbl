@@ -67,11 +67,14 @@
       border-radius: 2px;
     }
     @media (pointer: coarse) {
+      .hud {
+        display: none;
+      }
       #rewind-bar-container {
-        /* Horizontal bar at top of screen */
+        /* Horizontal bar at bottom of screen */
         position: fixed;
         left: 5%;
-        top: 16px;
+        bottom: 24px;
         width: 90%;
         height: 8px;
         z-index: 10;
