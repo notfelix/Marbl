@@ -278,14 +278,7 @@
     });
 
     const rewindBarContainer = document.getElementById('rewind-bar-container');
-    let levelColorsCSS = [
-      'rgb(18, 71, 179)',   // Level 0 blue
-      'rgb(199, 82, 87)',   // Level 1 red
-      'rgb(46, 148, 82)',   // Level 2 green
-      'rgb(140, 89, 166)',  // Level 3 purple
-      'rgb(204, 136, 51)',  // Level 4 gold
-      'rgb(38, 140, 166)'   // Level 5 cyan/teal
-    ];
+    let levelColorsCSS = []; // Populated from level configs in rebuildDerivedArrays()
 
     function updateRewindBar() {
       // Compute segments from history, tracking fall frames (transition > 0)
@@ -544,20 +537,6 @@
       const t = clamp01(1 - clamp01(flashNorm)); // 0 at start, 1 at end
       return Math.sin(Math.PI * t); // smooth attack/decay bell
     }
-    // HSL to RGB for wild orb rainbow cycling (h in 0-1, returns [r,g,b] in 0-1)
-    function hslToRgb(h, s=1, l=0.5) {
-      const c = (1 - Math.abs(2 * l - 1)) * s;
-      const x = c * (1 - Math.abs((h * 6) % 2 - 1));
-      const m = l - c / 2;
-      let r, g, b;
-      if (h < 1/6) { r = c; g = x; b = 0; }
-      else if (h < 2/6) { r = x; g = c; b = 0; }
-      else if (h < 3/6) { r = 0; g = c; b = x; }
-      else if (h < 4/6) { r = 0; g = x; b = c; }
-      else if (h < 5/6) { r = x; g = 0; b = c; }
-      else { r = c; g = 0; b = x; }
-      return [r + m, g + m, b + m];
-    }
     function mat4Perspective(fov,aspect,near,far){
       const f=1/Math.tan(fov/2);
       const nf=1/(near-far);
@@ -627,48 +606,6 @@
         y: m[1]*v.x + m[5]*v.y + m[9]*v.z,
         z: m[2]*v.x + m[6]*v.y + m[10]*v.z
       });
-    }
-    function mat4Invert(a){
-      const out=new Float32Array(16);
-      const a00=a[0], a01=a[1], a02=a[2], a03=a[3];
-      const a10=a[4], a11=a[5], a12=a[6], a13=a[7];
-      const a20=a[8], a21=a[9], a22=a[10], a23=a[11];
-      const a30=a[12],a31=a[13],a32=a[14],a33=a[15];
-
-      const b00 = a00 * a11 - a01 * a10;
-      const b01 = a00 * a12 - a02 * a10;
-      const b02 = a00 * a13 - a03 * a10;
-      const b03 = a01 * a12 - a02 * a11;
-      const b04 = a01 * a13 - a03 * a11;
-      const b05 = a02 * a13 - a03 * a12;
-      const b06 = a20 * a31 - a21 * a30;
-      const b07 = a20 * a32 - a22 * a30;
-      const b08 = a20 * a33 - a23 * a30;
-      const b09 = a21 * a32 - a22 * a31;
-      const b10 = a21 * a33 - a23 * a31;
-      const b11 = a22 * a33 - a23 * a32;
-
-      let det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
-      if (!det) return mat4Identity();
-      det = 1.0 / det;
-
-      out[0]  = ( a11 * b11 - a12 * b10 + a13 * b09) * det;
-      out[1]  = (-a01 * b11 + a02 * b10 - a03 * b09) * det;
-      out[2]  = ( a31 * b05 - a32 * b04 + a33 * b03) * det;
-      out[3]  = (-a21 * b05 + a22 * b04 - a23 * b03) * det;
-      out[4]  = (-a10 * b11 + a12 * b08 - a13 * b07) * det;
-      out[5]  = ( a00 * b11 - a02 * b08 + a03 * b07) * det;
-      out[6]  = (-a30 * b05 + a32 * b02 - a33 * b01) * det;
-      out[7]  = ( a20 * b05 - a22 * b02 + a23 * b01) * det;
-      out[8]  = ( a10 * b10 - a11 * b08 + a13 * b06) * det;
-      out[9]  = (-a00 * b10 + a01 * b08 - a03 * b06) * det;
-      out[10] = ( a30 * b04 - a31 * b02 + a33 * b00) * det;
-      out[11] = (-a20 * b04 + a21 * b02 - a23 * b00) * det;
-      out[12] = (-a10 * b09 + a11 * b07 - a12 * b06) * det;
-      out[13] = ( a00 * b09 - a01 * b07 + a02 * b06) * det;
-      out[14] = (-a30 * b03 + a31 * b01 - a32 * b00) * det;
-      out[15] = ( a20 * b03 - a21 * b01 + a22 * b00) * det;
-      return out;
     }
     function mat4Invert(a){
       const out=new Float32Array(16);
@@ -990,11 +927,6 @@
       }
       return arr;
     })();
-    const centralPedestalIndex = pedestalReferencePositions.findIndex(p => Math.abs(p.x) < 1e-3 && Math.abs(p.z) < 1e-3);
-    const topLeftPedestalIndex = pedestalReferencePositions.findIndex(p => p.x < 0 && p.z < 0);
-    const topRightPedestalIndex = pedestalReferencePositions.findIndex(p => p.x < 0 && p.z > 0);
-    const bottomLeftPedestalIndex = pedestalReferencePositions.findIndex(p => p.x > 0 && p.z < 0);
-    const bottomRightPedestalIndex = pedestalReferencePositions.findIndex(p => p.x > 0 && p.z > 0);
     const levelDrop = plane.w;
     const collapseConfig = { speed: 0.5 };
     const approachFadeDepth = levelDrop * 0.65;
@@ -1112,10 +1044,7 @@
     let currentSupport = null;
     let lastGroundedLevel = null;
     let lastGroundSurfaceHeight = null;
-    let smoothedTiltScale = 1; // Smoothed tilt scale to prevent position pops
     let smoothedSupportTilt = 1; // Smoothed support tilt for input to prevent plane wobble
-    let smoothedAccelX = 0; // Smoothed horizontal acceleration to prevent position pops
-    let smoothedAccelZ = 0;
     let smoothedMarbleTilt = 1; // Smoothed marble tilt for rendering
     let paused = false;
     let rafId = null;
@@ -2982,7 +2911,7 @@
       marble.pos.x = 0;
       marble.pos.z = 0;
       marble.vel.x = 0;
-      marble.vel.y = 0;
+      marble.vy = 0;
       marble.vel.z = 0;
       // Find a valid starting height (avoid hole at center)
       const level0 = levels[0];
@@ -3104,7 +3033,7 @@
       marble.pos.x = 0;
       marble.pos.z = 0;
       marble.vel.x = 0;
-      marble.vel.y = 0;
+      marble.vy = 0;
       marble.vel.z = 0;
       // Find a valid starting height (avoid hole at center)
       let startHeight = level.y;
