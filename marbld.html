@@ -564,7 +564,7 @@
       </div>
     </div>
     <div class="game-iframe-container">
-      <iframe id="game-iframe" src="index.html"></iframe>
+      <iframe id="game-iframe" src="marbl.html"></iframe>
     </div>
   </section>
 
@@ -596,6 +596,43 @@
   <input type="color" id="color-picker-hidden" style="display: none;">
 
   <script>
+    /*
+     * MarbLD - Level Designer for MARBL
+     *
+     * OVERVIEW:
+     * Visual editor for creating and editing MARBL game levels. Embeds the game
+     * in an iframe for live preview with hot reload (changes apply without resetting
+     * the marble position or game state).
+     *
+     * COMMUNICATION:
+     * - Editor → Game: postMessage with 'marbl-load-levels' (hot reload) or 'marbl-preview-level' (jump to level)
+     * - Game → Editor: 'marbl-ready' (connection established), 'marbl-reloaded' (reload complete)
+     * - Uses game's marblAPI.getLevelConfigs() to sync initial state
+     *
+     * LEVEL CONFIGURATION (per level):
+     * - pedestals: Array of indices [0-8] into 3x3 grid (pedestalReferencePositions in game)
+     *   Grid layout: 0=top-left, 4=center, 8=bottom-right (row-major order)
+     * - orbs: Array of {type: 'random'|'fixed', x?, z?, wild: boolean}
+     * - walls: Array of {x, z} grid coordinates (16x16 grid, cell size = 57.5 units)
+     * - wallHeight: Height of walls (default: 33.33, same as pedestal height)
+     * - colors: {floor, wall, pedestal, pedestalHole} - each an [r,g,b] array (0-1 range)
+     * - wild: Boolean - if true, level persists through time rewind
+     * - exactOrbs: Boolean - if true, requires exact orb count (no more, no less)
+     *
+     * WALL GRID:
+     * - 16x16 cells covering the 920x920 unit floor
+     * - Cell (0,0) is top-left in editor view
+     * - World coords: -(cell.x - 8 + 0.5) * 57.5 for X, same formula for Z
+     * - Pedestal spacing aligned to 5 cells (287.5 units) for symmetric wall contouring
+     *
+     * KEY FEATURES:
+     * - Pedestal picker with visual 3x3 grid toggle
+     * - Wall painter with click-drag to add, right-click-drag to erase
+     * - Color editor with harmonious color generation
+     * - Orb management (random/fixed position, wild toggle)
+     * - Import/Export as JSON
+     */
+
     // ===========================================
     // MarbLD Level Designer
     // ===========================================
@@ -1385,8 +1422,29 @@
     // ===========================================
     // Import/Export
     // ===========================================
-    document.getElementById('export-btn').addEventListener('click', () => {
+    let savedFileHandle = null;
+    document.getElementById('export-btn').addEventListener('click', async () => {
       const js = 'window.marblLevels = ' + JSON.stringify(levels, null, 2) + ';';
+
+      // Try File System Access API (Chrome/Edge) for direct save
+      if ('showSaveFilePicker' in window) {
+        try {
+          const handle = await window.showSaveFilePicker({
+            suggestedName: 'marbl-levels.js',
+            types: [{ description: 'JavaScript', accept: { 'application/javascript': ['.js'] } }],
+            startIn: savedFileHandle ?? 'downloads'
+          });
+          savedFileHandle = handle;
+          const writable = await handle.createWritable();
+          await writable.write(js);
+          await writable.close();
+          return;
+        } catch (e) {
+          if (e.name === 'AbortError') return; // User cancelled
+        }
+      }
+
+      // Fallback to download
       const blob = new Blob([js], { type: 'application/javascript' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');

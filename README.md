@@ -4,7 +4,7 @@ Simple top-down marble tilt demo on a 1024×1024 canvas. WASD tilts the plane an
 
 ## Run
 
-Open `index.html` in a browser.
+Open `marbl.html` in a browser (or `marbld.html` for the level editor).
 
 ## Controls
 
