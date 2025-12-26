@@ -68,7 +68,8 @@
     }
     @media (pointer: coarse) {
       #rewind-bar-container {
-        /* Horizontal bar above the playing field in portrait */
+        /* Horizontal bar at top of screen */
+        position: fixed;
         left: 5%;
         top: 16px;
         width: 90%;
@@ -76,7 +77,7 @@
         z-index: 10;
       }
       #rewind-bar-container .segment {
-        /* Rotate segment positioning for horizontal bar */
+        /* Horizontal segment positioning */
         top: 0;
         bottom: 0;
         left: auto;
