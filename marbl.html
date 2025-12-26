@@ -201,8 +201,10 @@
      * are "wild" and persist through time rewind.
      *
      * LEVEL LOADING:
-     * Levels are loaded externally from marbl-levels.js (auto-loaded if present) or via file picker.
-     * See marbl-levels.js for the level configuration format.
+     * Levels are loaded externally - no built-in levels included.
+     * - Auto-loads marbl-levels.js if present in the same directory
+     * - Otherwise shows a file picker to load a .js level file
+     * - Can also receive levels via postMessage (embedded in MarbLD editor)
      *
      * KEY SYSTEMS:
      * - Physics: Tilt-based acceleration, gravity, friction, wall/pedestal collision
