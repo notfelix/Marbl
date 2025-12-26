@@ -778,6 +778,48 @@
     uniform vec3 uHoleCenters[MAX_HOLES];
     uniform float uHoleRadii[MAX_HOLES];
     uniform float uHoleSoftness[MAX_HOLES];
+    uniform vec3 uMarbleCenter;
+    uniform float uMarbleRadius;
+
+    // Calculate shadow from a point light blocked by the marble sphere
+    // Uses angular geometry for proper circular shadows
+    float calcOrbShadow(vec3 lightPos, vec3 fragPos, vec3 sphereCenter, float sphereRadius) {
+      vec3 lightToSphere = sphereCenter - lightPos;
+      vec3 lightToFrag = fragPos - lightPos;
+
+      float distToSphere = length(lightToSphere);
+      float distToFrag = length(lightToFrag);
+
+      // Light too close to or inside sphere - no meaningful shadow
+      if (distToSphere < sphereRadius * 1.1) return 1.0;
+
+      // Normalize directions
+      vec3 dirToSphere = lightToSphere / distToSphere;
+      vec3 dirToFrag = lightToFrag / distToFrag;
+
+      // Check if fragment is in front of the sphere (between light and sphere)
+      float projF = dot(lightToFrag, dirToSphere);
+      if (projF < distToSphere - sphereRadius) return 1.0;
+
+      // Calculate the angular size of the shadow cone from the light's perspective
+      // sin(theta) = radius / distance, where theta is the half-angle of the shadow cone
+      float sinTheta = sphereRadius / distToSphere;
+      float cosTheta = sqrt(1.0 - sinTheta * sinTheta);
+
+      // Calculate cosine of angle between light-to-sphere and light-to-fragment directions
+      float cosAngle = dot(dirToSphere, dirToFrag);
+
+      // Fragment is in shadow cone if cosAngle > cosTheta (angle smaller than cone half-angle)
+      // Use smoothstep for soft penumbra edges
+      float penumbraWidth = (1.0 - cosTheta) * 0.35;
+      float shadow = smoothstep(cosTheta - penumbraWidth, cosTheta + penumbraWidth, cosAngle);
+
+      // Fade shadow for very close orbs (prevents harsh shadows when orb is right next to marble)
+      float proximityFade = smoothstep(sphereRadius * 1.2, sphereRadius * 2.5, distToSphere);
+
+      // shadow=1 means in cone, we want to return 0 for shadowed areas
+      return 1.0 - shadow * proximityFade;
+    }
 
     float sampleShadow(vec2 uv, float compareDepth) {
       if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 1.0;
@@ -886,7 +928,9 @@
         float ambient = 0.25;  // Minimum glow regardless of angle
         float lighting = ambient + (1.0 - ambient) * diffP;
         float atten = uPointIntensity[i] / (1.0 + dist * dist * 0.0008);
-        color += uPointColor[i] * lighting * atten;
+        // Calculate shadow from marble blocking this orb's light
+        float orbShadow = calcOrbShadow(uPointPos[i], vWorldPos, uMarbleCenter, uMarbleRadius);
+        color += uPointColor[i] * lighting * atten * orbShadow;
       }
       color = clamp(color, 0.0, 2.5);
       gl_FragColor = vec4(color, uAlpha);
@@ -936,7 +980,9 @@
       holeCount: gl.getUniformLocation(program, 'uHoleCount'),
       holeCenters: gl.getUniformLocation(program, 'uHoleCenters[0]'),
       holeRadii: gl.getUniformLocation(program, 'uHoleRadii[0]'),
-      holeSoftness: gl.getUniformLocation(program, 'uHoleSoftness[0]')
+      holeSoftness: gl.getUniformLocation(program, 'uHoleSoftness[0]'),
+      marbleCenter: gl.getUniformLocation(program, 'uMarbleCenter'),
+      marbleRadius: gl.getUniformLocation(program, 'uMarbleRadius')
     };
     const MAX_HOLES = 4;
     const MAX_POINT_LIGHTS = 12;
@@ -2020,6 +2066,18 @@
       gl.uniform3fv(uniforms.pointPos, positions);
       gl.uniform1fv(uniforms.pointIntensity, intensities);
       gl.uniform3fv(uniforms.pointColor, colors);
+
+      // Set marble center and radius for orb shadow calculations
+      const activeLevel = getActiveLevel();
+      const marbleLevelY = activeLevel?.y || 0;
+      const marbleBoardM = boardTransform(marbleLevelY);
+      const marbleWorld = mat4TransformVec4(marbleBoardM, [marble.pos.x, marble.y - marbleLevelY, marble.pos.z, 1]);
+      gl.uniform3f(uniforms.marbleCenter,
+        Number.isFinite(marbleWorld[0]) ? marbleWorld[0] : 0,
+        Number.isFinite(marbleWorld[1]) ? marbleWorld[1] : 0,
+        Number.isFinite(marbleWorld[2]) ? marbleWorld[2] : 0
+      );
+      gl.uniform1f(uniforms.marbleRadius, marble.r);
     }
 
     function spawnOrbsForLevel(levelIndex=0, savedOrbs=[]) {
