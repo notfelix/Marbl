@@ -3055,39 +3055,43 @@
       }
     }
 
+    const FIXED_DT = 1/60;  // Fixed 60Hz physics timestep
+    let physicsAccumulator = 0;
+
     function frame(time) {
       try {
       const now = time * 0.001;
       const delta = now - (frame.last || now);
-      const dt = Math.min(0.033, delta);
       frame.last = now;
+
+      // Accumulate time, but cap to prevent spiral of death on slow devices
+      physicsAccumulator += Math.min(delta, 0.1);
 
       const rewinding = keys.has('Space');
       if (rewinding) {
-        rewindAccumulator += rewindSpeed;
-        let rewindBlocked = false;
-        while (rewindAccumulator >= 1) {
-          rewindAccumulator -= 1;
-          if (rewindStep()) {
-            rewindBlocked = true;
-            rewindAccumulator = 0; // Stop accumulating when blocked
-            break;
+        // Run fixed timestep physics updates
+        while (physicsAccumulator >= FIXED_DT) {
+          rewindAccumulator += rewindSpeed * FIXED_DT * 60;  // Scale rewind speed to fixed timestep
+          let rewindBlocked = false;
+          while (rewindAccumulator >= 1) {
+            rewindAccumulator -= 1;
+            if (rewindStep()) {
+              rewindBlocked = true;
+              rewindAccumulator = 0;
+              break;
+            }
           }
+          refreshSupport();
+          updateCollapses(FIXED_DT);
+          if (history.length > 1 && !rewindBlocked) {
+            updateWildOrbs(FIXED_DT);
+          }
+          if (starsReversed && history.length > 1 && !rewindBlocked) {
+            updateStars(FIXED_DT);
+          }
+          physicsAccumulator -= FIXED_DT;
         }
-        refreshSupport();
-        // Update collapses during rewind so pedestals can close when orb count drops
-        updateCollapses(dt);
-        // Only update wild orbs and animation if there's still history to rewind and not blocked
-        if (history.length > 1 && !rewindBlocked) {
-          updateWildOrbs(dt);
-          // Keep animation time advancing for wild orb rainbow effect (ensure finite)
-          if (Number.isFinite(delta)) orbAnimTime += delta;
-        }
-        // When star history is exhausted, keep stars moving with reversed velocities
-        // But freeze everything when main history hits zero or rewind is blocked
-        if (starsReversed && history.length > 1 && !rewindBlocked) {
-          updateStars(dt);
-        }
+        if (Number.isFinite(delta)) orbAnimTime += delta;
       } else {
         rewindAccumulator = 0;
         // Transition from rewind to forward: un-reverse star velocities
@@ -3095,16 +3099,21 @@
           reverseStarVelocities();
           starsReversed = false;
         }
-        updateInput(dt);
-        updatePhysics(dt);
-        updateStars(dt);
+        // Run fixed timestep physics updates
+        while (physicsAccumulator >= FIXED_DT) {
+          updateInput(FIXED_DT);
+          updatePhysics(FIXED_DT);
+          updateStars(FIXED_DT);
+          pushHistory();
+          physicsAccumulator -= FIXED_DT;
+        }
         if (Number.isFinite(delta)) orbAnimTime += delta;
-        pushHistory();
       }
 
       // Update rewind bar
       updateRewindBar();
-      updateCamera(dt);
+      // Camera uses actual delta for smooth interpolation
+      updateCamera(Math.min(delta, 0.1));
       drawStars();
       updateLightsUniforms();
 
