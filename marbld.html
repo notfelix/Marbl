@@ -666,6 +666,18 @@
     let isWallPainting = false;
     let wallPaintMode = 'add'; // 'add' or 'remove'
 
+    // Throttle utility for performance-sensitive operations
+    function throttle(fn, delay) {
+      let lastCall = 0;
+      return function(...args) {
+        const now = Date.now();
+        if (now - lastCall >= delay) {
+          lastCall = now;
+          fn.apply(this, args);
+        }
+      };
+    }
+
     // Migrate old level format to new format
     function migrateLevelFormat(level) {
       // Migrate orbs (orbCount/fixedOrb → orbs array)
@@ -936,7 +948,6 @@
       }
 
       const level = levels[selectedLevelIndex];
-      const isFinalLevel = level.pedestals.length === 0;
 
       editorContentEl.innerHTML = `
         <!-- Basic Settings -->
@@ -1069,7 +1080,7 @@
           }
           renderEditor();
           renderLevelList();
-            applyToGame();
+          applyToGame();
         });
       });
 
@@ -1090,7 +1101,7 @@
           level.orbs.splice(idx, 1);
           renderEditor();
           renderLevelList();
-            applyToGame();
+          applyToGame();
         });
       });
 
@@ -1106,7 +1117,7 @@
             level.orbs[idx].z = level.orbs[idx].z ?? 0;
           }
           renderEditor();
-            applyToGame();
+          applyToGame();
         });
       });
 
@@ -1115,7 +1126,7 @@
         input.addEventListener('change', () => {
           const idx = parseInt(input.dataset.orbIndex);
           level.orbs[idx].x = parseFloat(input.value) || 0;
-            applyToGame();
+          applyToGame();
         });
       });
 
@@ -1124,7 +1135,7 @@
         input.addEventListener('change', () => {
           const idx = parseInt(input.dataset.orbIndex);
           level.orbs[idx].z = parseFloat(input.value) || 0;
-            applyToGame();
+          applyToGame();
         });
       });
 
@@ -1133,7 +1144,7 @@
         checkbox.addEventListener('change', () => {
           const idx = parseInt(checkbox.dataset.orbIndex);
           level.orbs[idx].wild = checkbox.checked;
-            applyToGame();
+          applyToGame();
         });
       });
 
@@ -1277,7 +1288,8 @@
         applyToGame();
       };
 
-      // Mouse move - continue painting
+      // Mouse move - continue painting (throttle game updates for performance)
+      const throttledApply = throttle(() => applyToGame(), 50);
       canvas.onmousemove = (e) => {
         if (!isWallPainting) return;
         const cell = getCellFromEvent(e);
@@ -1289,15 +1301,17 @@
           removeWallCell(level, cell.x, cell.z);
         }
         renderWallGrid(level);
-        applyToGame();
+        throttledApply();
       };
 
-      // Mouse up - stop painting
+      // Mouse up - stop painting and ensure final state is synced
       canvas.onmouseup = () => {
+        if (isWallPainting) applyToGame();
         isWallPainting = false;
       };
 
       canvas.onmouseleave = () => {
+        if (isWallPainting) applyToGame();
         isWallPainting = false;
       };
     }
@@ -1353,7 +1367,7 @@
       if (!gameConnected) return;
       gameIframe.contentWindow.postMessage({
         type: 'marbl-load-levels',
-        levels: JSON.parse(JSON.stringify(levels)),
+        levels: structuredClone(levels),
         hotReload: true // Preserve game state (marble position, orbs, etc.)
       }, '*');
     }
@@ -1366,12 +1380,6 @@
         // Load initial levels from game
         loadLevelsFromGame();
       }
-      if (e.data?.type === 'marbl-reloaded') {
-        // Game confirmed reload - jump to preserved level
-        if (e.data.preservedLevel !== undefined && e.data.preservedLevel >= 0) {
-          // Level was preserved, no action needed
-        }
-      }
     });
 
     function loadLevelsFromGame() {
@@ -1379,7 +1387,7 @@
       try {
         const gameLevels = gameIframe.contentWindow.marblAPI?.getLevelConfigs();
         if (gameLevels && gameLevels.length > 0) {
-          levels = JSON.parse(JSON.stringify(gameLevels));
+          levels = structuredClone(gameLevels);
           // Migrate old format (orbCount/fixedOrb) to new format (orbs array)
           levels.forEach(migrateLevelFormat);
           renderLevelList();
@@ -1390,7 +1398,7 @@
       } catch (err) {
         console.warn('Could not load levels from game:', err);
         // Use default if can't load
-        levels = [JSON.parse(JSON.stringify(defaultLevelTemplate))];
+        levels = [structuredClone(defaultLevelTemplate)];
         renderLevelList();
         selectLevel(0);
       }
@@ -1401,7 +1409,7 @@
     // ===========================================
     document.getElementById('add-level-btn').addEventListener('click', () => {
       const hue = suggestNextColor(levels);
-      const newLevel = JSON.parse(JSON.stringify(defaultLevelTemplate));
+      const newLevel = structuredClone(defaultLevelTemplate);
       newLevel.colors = generateHarmoniousColors(hue);
       levels.push(newLevel);
       renderLevelList();
