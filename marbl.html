@@ -20,6 +20,10 @@
       color: #e5ecff;
       font-family: "Inter", system-ui, -apple-system, sans-serif;
       height: 100vh;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: transparent;
     }
     #stars {
       position: fixed;
@@ -37,6 +41,9 @@
       display: block;
       position: relative;
       z-index: 1;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
     }
     #game-container {
       position: relative;
@@ -3342,6 +3349,9 @@
         canvas.addEventListener('touchcancel', () => {
           keys.delete('Space');
         });
+        // Prevent magnifying glass / context menu on iOS
+        document.addEventListener('contextmenu', (e) => e.preventDefault());
+        document.addEventListener('selectstart', (e) => e.preventDefault());
       }
     }
 
