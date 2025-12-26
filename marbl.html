@@ -746,21 +746,28 @@
     uniform mat4 uMVP;
     uniform mat4 uModel;
     uniform mat4 uNormalMatrix;
+    uniform mat4 uLightSpaceMatrix;
     varying vec3 vNormal;
     varying vec3 vWorldPos;
+    varying vec4 vLightSpacePos;
     void main(){
       vNormal = mat3(uNormalMatrix) * aNormal;
-      vWorldPos = (uModel * vec4(aPosition,1.0)).xyz;
+      vec4 worldPos = uModel * vec4(aPosition,1.0);
+      vWorldPos = worldPos.xyz;
+      vLightSpacePos = uLightSpaceMatrix * worldPos;
       gl_Position = uMVP * vec4(aPosition,1.0);
     }`;
     const fsSource=`
-    precision mediump float;
+    precision highp float;
     varying vec3 vNormal;
     varying vec3 vWorldPos;
+    varying vec4 vLightSpacePos;
     uniform vec3 uLightDir;
     uniform vec3 uColor;
     uniform vec3 uAmbient;
     uniform float uAlpha;
+    uniform sampler2D uShadowMap;
+    uniform float uShadowEnabled;
     const int MAX_POINTS = 12;
     const int MAX_HOLES = 4;
     uniform int uPointCount;
@@ -771,10 +778,89 @@
     uniform vec3 uHoleCenters[MAX_HOLES];
     uniform float uHoleRadii[MAX_HOLES];
     uniform float uHoleSoftness[MAX_HOLES];
+
+    float sampleShadow(vec2 uv, float compareDepth) {
+      if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 1.0;
+      float closestDepth = texture2D(uShadowMap, uv).r;
+      return compareDepth > closestDepth ? 0.0 : 1.0;
+    }
+
+    float calculateShadow() {
+      if (uShadowEnabled < 0.5) return 1.0;
+
+      // Perspective divide and transform to [0,1] range
+      vec3 projCoords = vLightSpacePos.xyz / vLightSpacePos.w;
+      projCoords = projCoords * 0.5 + 0.5;
+
+      // Outside shadow map bounds - no shadow
+      if (projCoords.x < 0.0 || projCoords.x > 1.0 ||
+          projCoords.y < 0.0 || projCoords.y > 1.0 ||
+          projCoords.z > 1.0) {
+        return 1.0;
+      }
+
+      vec3 n = normalize(vNormal);
+      vec3 lightDir = normalize(uLightDir);
+      // Bias based on surface angle to light (reduces shadow acne)
+      float bias = max(0.003 * (1.0 - dot(n, lightDir)), 0.001);
+      float compareDepth = projCoords.z - bias;
+
+      // PCSS-style contact hardening: find average blocker depth
+      float texelSize = 1.0 / 2048.0;
+      float blockerSum = 0.0;
+      float blockerCount = 0.0;
+      float searchRadius = 8.0 * texelSize;
+
+      for (int x = -3; x <= 3; x++) {
+        for (int y = -3; y <= 3; y++) {
+          vec2 offset = vec2(float(x), float(y)) * searchRadius / 3.0;
+          float sampleDepth = texture2D(uShadowMap, projCoords.xy + offset).r;
+          if (sampleDepth < compareDepth) {
+            blockerSum += sampleDepth;
+            blockerCount += 1.0;
+          }
+        }
+      }
+
+      // No blockers found - fully lit
+      if (blockerCount < 0.5) return 1.0;
+
+      // Calculate penumbra size based on blocker distance
+      float avgBlockerDepth = blockerSum / blockerCount;
+      float blockerDistance = projCoords.z - avgBlockerDepth;
+
+      // Contact hardening: shadow gets tighter as blocker is closer to receiver
+      // penumbraWidth is proportional to distance between blocker and receiver
+      float penumbraWidth = max(0.5, blockerDistance * 80.0);
+      float filterRadius = penumbraWidth * texelSize;
+
+      // PCF with variable kernel size for soft shadows
+      float shadow = 0.0;
+      float samples = 0.0;
+      for (int x = -3; x <= 3; x++) {
+        for (int y = -3; y <= 3; y++) {
+          vec2 offset = vec2(float(x), float(y)) * filterRadius / 3.0;
+          shadow += sampleShadow(projCoords.xy + offset, compareDepth);
+          samples += 1.0;
+        }
+      }
+      shadow /= samples;
+
+      // Smooth shadow strength based on surface facing
+      float facingLight = max(0.0, dot(n, lightDir));
+      shadow = mix(1.0, shadow, facingLight * 0.85 + 0.15);
+
+      return shadow;
+    }
+
     void main(){
       vec3 n = normalize(vNormal);
       float diff = max(dot(n, normalize(uLightDir)), 0.0);
-      vec3 color = uAmbient + uColor * diff;
+
+      // Apply shadow to directional light
+      float shadow = calculateShadow();
+      vec3 color = uAmbient + uColor * diff * shadow;
+
       float holeMask = 1.0;
       for (int i=0; i<MAX_HOLES; ++i) {
         if (i >= uHoleCount) break;
@@ -836,10 +922,13 @@
       mvp: gl.getUniformLocation(program, 'uMVP'),
       model: gl.getUniformLocation(program, 'uModel'),
       normalMatrix: gl.getUniformLocation(program, 'uNormalMatrix'),
+      lightSpaceMatrix: gl.getUniformLocation(program, 'uLightSpaceMatrix'),
       lightDir: gl.getUniformLocation(program, 'uLightDir'),
       color: gl.getUniformLocation(program, 'uColor'),
       ambient: gl.getUniformLocation(program, 'uAmbient'),
       alpha: gl.getUniformLocation(program, 'uAlpha'),
+      shadowMap: gl.getUniformLocation(program, 'uShadowMap'),
+      shadowEnabled: gl.getUniformLocation(program, 'uShadowEnabled'),
       pointCount: gl.getUniformLocation(program, 'uPointCount'),
       pointPos: gl.getUniformLocation(program, 'uPointPos'),
       pointIntensity: gl.getUniformLocation(program, 'uPointIntensity'),
@@ -854,6 +943,70 @@
     const holeCentersArr = new Float32Array(MAX_HOLES * 3);
     const holeRadiiArr = new Float32Array(MAX_HOLES);
     const holeSoftnessArr = new Float32Array(MAX_HOLES);
+
+    // ========================================
+    // SHADOW MAPPING SETUP
+    // ========================================
+    const SHADOW_MAP_SIZE = 2048;
+
+    // Shadow depth shaders (render from light's perspective)
+    const shadowVsSource = `
+    attribute vec3 aPosition;
+    uniform mat4 uLightMVP;
+    void main() {
+      gl_Position = uLightMVP * vec4(aPosition, 1.0);
+    }`;
+    const shadowFsSource = `
+    precision mediump float;
+    void main() {
+      // Depth is written automatically
+    }`;
+
+    const shadowVs = createShader(gl.VERTEX_SHADER, shadowVsSource);
+    const shadowFs = createShader(gl.FRAGMENT_SHADER, shadowFsSource);
+    const shadowProgram = gl.createProgram();
+    gl.attachShader(shadowProgram, shadowVs);
+    gl.attachShader(shadowProgram, shadowFs);
+    gl.linkProgram(shadowProgram);
+    if (!gl.getProgramParameter(shadowProgram, gl.LINK_STATUS)) {
+      console.error('Shadow program link error:', gl.getProgramInfoLog(shadowProgram));
+    }
+
+    const shadowAttribs = {
+      position: gl.getAttribLocation(shadowProgram, 'aPosition')
+    };
+    const shadowUniforms = {
+      lightMVP: gl.getUniformLocation(shadowProgram, 'uLightMVP')
+    };
+
+    // Create shadow map framebuffer and depth texture
+    const shadowFramebuffer = gl.createFramebuffer();
+    const shadowDepthTexture = gl.createTexture();
+
+    gl.bindTexture(gl.TEXTURE_2D, shadowDepthTexture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, 0, gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, shadowFramebuffer);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, shadowDepthTexture, 0);
+
+    // Check framebuffer completeness
+    const fbStatus = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+    if (fbStatus !== gl.FRAMEBUFFER_COMPLETE) {
+      console.error('Shadow framebuffer incomplete:', fbStatus);
+    }
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+
+    // Light space matrix storage
+    let lightSpaceMatrix = mat4Identity();
+
+    // Switch back to main program
+    gl.useProgram(program);
 
     function createMesh(geo){
       const vao=gl.createVertexArray();
@@ -2175,6 +2328,88 @@
       smooth: 2.6
     };
 
+    // ========================================
+    // SHADOW RENDERING FUNCTIONS
+    // ========================================
+
+    function mat4Ortho(left, right, bottom, top, near, far) {
+      const lr = 1 / (left - right);
+      const bt = 1 / (bottom - top);
+      const nf = 1 / (near - far);
+      return new Float32Array([
+        -2 * lr, 0, 0, 0,
+        0, -2 * bt, 0, 0,
+        0, 0, 2 * nf, 0,
+        (left + right) * lr, (top + bottom) * bt, (far + near) * nf, 1
+      ]);
+    }
+
+    function calculateLightSpaceMatrix(marblePos, marbleY, levelY) {
+      // Shadow light direction in screen coordinates (matching camera's top-down view):
+      //   right: positive = light comes from right (shadow falls left)
+      //   up:    positive = light comes from top of screen (shadow falls down)
+      //   height: how high above the scene (affects shadow length)
+      const right = 0.4;   // Light from right side
+      const up = 0.3;      // Light from top of screen
+      const height = 1.0;  // Light height above scene
+
+      const lightDistance = 2000;
+      // Scene coordinates: Y is vertical (up), X is right, Z is toward camera bottom
+      // Camera looks down Y axis with Z as screen-up
+      const lightPos = {
+        x: right * lightDistance,     // +X = right on screen
+        y: height * lightDistance,    // +Y = above scene
+        z: up * lightDistance         // +Z = up on screen (toward 12 o'clock)
+      };
+      const lightTarget = { x: 0, y: 0, z: 0 };
+
+      // Use same up vector as camera for consistent orientation
+      const lightView = mat4LookAt(lightPos, lightTarget, { x: -1, y: 0, z: 10 });
+
+      // Larger ortho bounds to prevent clipping at steep angles
+      const orthoSize = 1200;
+      const lightProj = mat4Ortho(-orthoSize, orthoSize, -orthoSize, orthoSize, 1, lightDistance * 3);
+
+      // Combine into light space matrix
+      return mat4Multiply(lightProj, lightView);
+    }
+
+    function renderShadowPass(marbleModel, levelY) {
+      // Bind shadow framebuffer
+      gl.bindFramebuffer(gl.FRAMEBUFFER, shadowFramebuffer);
+      gl.viewport(0, 0, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+      gl.clear(gl.DEPTH_BUFFER_BIT);
+
+      // Enable depth testing, disable color write
+      gl.enable(gl.DEPTH_TEST);
+      gl.depthFunc(gl.LESS);
+      gl.colorMask(false, false, false, false);
+
+      // Use shadow program
+      gl.useProgram(shadowProgram);
+
+      // Calculate light space matrix centered on marble
+      lightSpaceMatrix = calculateLightSpaceMatrix(marble.pos, marble.y, levelY);
+
+      // Create shadow VAO for marble (reuses marble geometry)
+      gl.bindVertexArray(meshes.marble.vao);
+
+      // Calculate light MVP for marble
+      const lightMVP = mat4Multiply(lightSpaceMatrix, marbleModel);
+      gl.uniformMatrix4fv(shadowUniforms.lightMVP, false, lightMVP);
+
+      // Draw marble to shadow map
+      gl.drawElements(gl.TRIANGLES, meshes.marble.count, gl.UNSIGNED_SHORT, 0);
+
+      // Restore state
+      gl.colorMask(true, true, true, true);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, canvas.width, canvas.height);
+
+      // Switch back to main program
+      gl.useProgram(program);
+    }
+
     // Input and physics
     function updateInput(dt) {
       const target = plane.targetTilt;
@@ -2449,10 +2684,20 @@
       gl.uniformMatrix4fv(uniforms.normalMatrix, false, normalMatrix);
     }
 
-    function drawMesh(mesh, model, color, ambient=[0.05,0.08,0.12], alpha=1.0, holeMask=null) {
+    let shadowEnabled = false;
+    let shadowReceiveEnabled = true;
+
+    function drawMesh(mesh, model, color, ambient=[0.05,0.08,0.12], alpha=1.0, holeMask=null, receiveShadow=true) {
       gl.bindVertexArray(mesh.vao);
       setMatrices(model);
       gl.uniform3fv(uniforms.lightDir, new Float32Array([lightDir.x, lightDir.y, lightDir.z]));
+
+      // Shadow uniforms
+      gl.uniformMatrix4fv(uniforms.lightSpaceMatrix, false, lightSpaceMatrix);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, shadowDepthTexture);
+      gl.uniform1i(uniforms.shadowMap, 0);
+      gl.uniform1f(uniforms.shadowEnabled, (shadowEnabled && shadowReceiveEnabled && receiveShadow) ? 1.0 : 0.0);
       // Validate color array to prevent NaN/undefined issues
       const safeColor = Array.isArray(color) && color.length >= 3
         ? [
@@ -2532,19 +2777,16 @@
       const normal = levelNormalAt(supportLevel, marble.pos.x, marble.pos.z);
       const orient = mat4FromNormal(normal);
       const deltaY = Number.isFinite(surfaceY) ? marble.y - (surfaceY + marble.r) : Infinity; // >0 above plane, <0 below
-      const altitudeForFx = deltaY > 0 ? deltaY : Infinity; // hide shadow/reflection once we fall through
-      // Soft blob shadow aligned to surface
-      const shadowOffset = 1.2;
+      const altitudeForFx = deltaY > 0 ? deltaY : Infinity; // hide reflection once we fall through
+
+      // Calculate proximity for reflection fade (used to be for old blob shadow too)
       const altitude = isAirborne()
         ? altitudeForFx
         : (Number.isFinite(currentSupport?.altitude) ? currentSupport.altitude : altitudeForFx);
-      const shadowStrength = Number.isFinite(altitude) ? Math.max(0, Math.min(1, 1 - Math.max(0, altitude) / (marble.r * 2.5))) : 0;
-      let shadowM = boardM;
-      shadowM = mat4Translate(shadowM, [marble.pos.x, planeY - levelY + shadowOffset, marble.pos.z]);
-      shadowM = mat4Multiply(shadowM, orient);
-      shadowM = mat4Scale(shadowM, [1.08, 0.08, 1.08]);
-      drawMesh(meshes.marble, shadowM, [0,0,0], [0,0,0], 0.38 * shadowStrength, holeMask);
+      const proximityStrength = Number.isFinite(altitude) ? Math.max(0, Math.min(1, 1 - Math.max(0, altitude) / (marble.r * 2.5))) : 0;
+
       // Reflection (mirror across the local surface plane)
+      // Shadow is now handled by shadow mapping in the main shader
       const distanceAbove = marble.y - planeY;
       if (deltaY >= 0) { // only show reflection while above the plane
         const reflectionY = planeY - distanceAbove + 1.2;
@@ -2552,7 +2794,7 @@
         reflectionM = mat4Translate(reflectionM, [marble.pos.x, reflectionY - levelY, marble.pos.z]);
         reflectionM = mat4Multiply(reflectionM, orient);
         reflectionM = mat4Scale(reflectionM, [1, -1, 1]);
-        drawMesh(meshes.marble, reflectionM, [0.65,0.7,0.8], [0.05,0.05,0.08], 0.22 * Math.max(0, shadowStrength * 0.58), holeMask);
+        drawMesh(meshes.marble, reflectionM, [0.65,0.7,0.8], [0.05,0.05,0.08], 0.22 * Math.max(0, proximityStrength * 0.58), holeMask, false); // Reflection doesn't receive shadow
       }
     }
 
@@ -2702,11 +2944,25 @@
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
       const activeLevel = getActiveLevel();
+      const activeLevelYForShadow = activeLevel?.y || 0;
+
       // Smooth the marble tilt scale for rendering to prevent visual pops
+      // (moved before shadow pass to keep shadow in sync)
       const targetMarbleTilt = Math.max(0, Math.min(1, currentSupport?.support ?? 0));
       const marbleTiltSmoothSpeed = 5;
       smoothedMarbleTilt += (targetMarbleTilt - smoothedMarbleTilt) * Math.min(1, dt * marbleTiltSmoothSpeed);
       const marbleTiltScale = smoothedMarbleTilt;
+
+      // ========================================
+      // SHADOW PASS - Render marble to shadow map
+      // ========================================
+      {
+        const marbleTiltMForShadow = boardTransform(activeLevelYForShadow, marbleTiltScale);
+        let marbleModelForShadow = marbleTiltMForShadow;
+        marbleModelForShadow = mat4Translate(marbleModelForShadow, [marble.pos.x, marble.y - activeLevelYForShadow, marble.pos.z]);
+        renderShadowPass(marbleModelForShadow, activeLevelYForShadow);
+        shadowEnabled = true;
+      }
       const fadeDepth = levelDrop * 0.75; // fade out as we fall roughly three quarters of a level
       function isLevelUnlocked(level) {
         if (!level) return false;
@@ -2818,7 +3074,7 @@
       gl.clear(gl.DEPTH_BUFFER_BIT); // Clear depth so marble/orbs render on top, alpha handles fade
       let marbleM = marbleTiltM;
       marbleM = mat4Translate(marbleM, [marble.pos.x, marble.y - activeLevelY, marble.pos.z]);
-      drawMesh(meshes.marble, marbleM, [0.7,0.7,0.7], [0.1,0.1,0.1], marbleOrbAlpha);
+      drawMesh(meshes.marble, marbleM, [0.7,0.7,0.7], [0.1,0.1,0.1], marbleOrbAlpha, null, false); // Marble doesn't receive its own shadow
 
       // Draw current-level orbs over the marble for a brighter, on-top glow
       const activeEntry = boardEntries.find(e => e.level.index === activeLevel?.index);
