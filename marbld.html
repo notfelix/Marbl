@@ -1561,7 +1561,13 @@
     });
 
     document.getElementById('apply-btn').addEventListener('click', () => {
-      applyToGame();
+      // Full reset - not a hot reload, so orbs respawn and game state resets
+      if (!gameConnected) return;
+      gameIframe.contentWindow.postMessage({
+        type: 'marbl-load-levels',
+        levels: structuredClone(levels),
+        hotReload: false // Full reset
+      }, '*');
     });
 
     // ===========================================
