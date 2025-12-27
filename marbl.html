@@ -391,7 +391,7 @@
      * COORDINATES: Y is up, levels stack downward (negative Y), camera looks from above
      */
 
-    const GAME_VERSION = 'v0.110c';
+    const GAME_VERSION = 'v0.110d';
 
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     // XR-capable devices (like Quest) should use desktop-class rendering quality
@@ -1067,9 +1067,15 @@
       return 1.0 - shadow * proximityFade;
     }
 
+    // Unpack depth from RGBA (matches packDepth in shadow shader)
+    float unpackDepth(vec4 rgba) {
+      const vec4 bitShift = vec4(1.0 / (256.0 * 256.0 * 256.0), 1.0 / (256.0 * 256.0), 1.0 / 256.0, 1.0);
+      return dot(rgba, bitShift);
+    }
+
     float sampleShadow(vec2 uv, float compareDepth) {
       if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 1.0;
-      float closestDepth = texture2D(uShadowMap, uv).r;
+      float closestDepth = unpackDepth(texture2D(uShadowMap, uv));
       return compareDepth > closestDepth ? 0.0 : 1.0;
     }
 
@@ -1245,16 +1251,28 @@
     const SHADOW_MAP_SIZE = isDesktopClass ? 2048 : 1024;
 
     // Shadow depth shaders (render from light's perspective)
+    // Encodes depth to RGBA for better mobile/Quest compatibility
     const shadowVsSource = `
     attribute vec3 aPosition;
     uniform mat4 uLightMVP;
+    varying float vDepth;
     void main() {
       gl_Position = uLightMVP * vec4(aPosition, 1.0);
+      vDepth = gl_Position.z / gl_Position.w * 0.5 + 0.5;  // Map to 0-1
     }`;
     const shadowFsSource = `
-    precision mediump float;
+    precision highp float;
+    varying float vDepth;
+    // Pack depth into RGBA for better precision on mobile
+    vec4 packDepth(float depth) {
+      const vec4 bitShift = vec4(256.0 * 256.0 * 256.0, 256.0 * 256.0, 256.0, 1.0);
+      const vec4 bitMask = vec4(0.0, 1.0 / 256.0, 1.0 / 256.0, 1.0 / 256.0);
+      vec4 res = fract(depth * bitShift);
+      res -= res.xxyz * bitMask;
+      return res;
+    }
     void main() {
-      // Depth is written automatically
+      gl_FragColor = packDepth(vDepth);
     }`;
 
     const shadowVs = createShader(gl.VERTEX_SHADER, shadowVsSource);
@@ -1274,19 +1292,26 @@
       lightMVP: gl.getUniformLocation(shadowProgram, 'uLightMVP')
     };
 
-    // Create shadow map framebuffer and depth texture
+    // Create shadow map framebuffer with COLOR texture (better mobile support than depth texture)
     const shadowFramebuffer = gl.createFramebuffer();
-    const shadowDepthTexture = gl.createTexture();
+    const shadowColorTexture = gl.createTexture();
+    const shadowDepthRenderbuffer = gl.createRenderbuffer();
 
-    gl.bindTexture(gl.TEXTURE_2D, shadowDepthTexture);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, 0, gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);
+    // Color texture to store packed depth
+    gl.bindTexture(gl.TEXTURE_2D, shadowColorTexture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
+    // Depth renderbuffer for proper depth testing during shadow pass
+    gl.bindRenderbuffer(gl.RENDERBUFFER, shadowDepthRenderbuffer);
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+
     gl.bindFramebuffer(gl.FRAMEBUFFER, shadowFramebuffer);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, shadowDepthTexture, 0);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, shadowColorTexture, 0);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, shadowDepthRenderbuffer);
 
     // Check framebuffer completeness
     const fbStatus = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
@@ -1296,6 +1321,9 @@
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.bindTexture(gl.TEXTURE_2D, null);
+
+    // Alias for compatibility with existing code
+    const shadowDepthTexture = shadowColorTexture;
 
     // Light space matrix storage
     let lightSpaceMatrix = mat4Identity();
@@ -2697,12 +2725,15 @@
       // Bind shadow framebuffer
       gl.bindFramebuffer(gl.FRAMEBUFFER, shadowFramebuffer);
       gl.viewport(0, 0, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
-      gl.clear(gl.DEPTH_BUFFER_BIT);
 
-      // Enable depth testing, disable color write
+      // Clear to white (max depth = no shadow) and clear depth
+      gl.clearColor(1.0, 1.0, 1.0, 1.0);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+      // Enable depth testing and color writes (we write depth to color texture)
       gl.enable(gl.DEPTH_TEST);
       gl.depthFunc(gl.LESS);
-      gl.colorMask(false, false, false, false);
+      gl.colorMask(true, true, true, true);
 
       // Use shadow program
       gl.useProgram(shadowProgram);
