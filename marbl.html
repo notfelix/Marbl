@@ -391,7 +391,7 @@
      * COORDINATES: Y is up, levels stack downward (negative Y), camera looks from above
      */
 
-    const GAME_VERSION = 'v0.106g';
+    const GAME_VERSION = 'v0.106h';
 
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     // XR-capable devices (like Quest) should use desktop-class rendering quality
@@ -1183,36 +1183,7 @@
       }
       color = clamp(color, 0.0, 2.5);
 
-      // Planar reflection for floor/pedestal surfaces
-      if (uReflectionEnabled > 0.5) {
-        vec3 n = normalize(vNormal);
-        float upFacing = dot(n, vec3(0.0, 1.0, 0.0));
-
-        // Calculate UV based on world XZ position relative to marble
-        vec3 toMarble = uReflectionMarblePos - vWorldPosOriginal;
-        float texScale = 1.0 / (uMarbleRadius * 3.0);
-        vec2 reflectUV = vec2(
-          0.5 + toMarble.x * texScale,
-          0.5 + toMarble.z * texScale
-        );
-
-        // Sample if in valid UV range and surface faces up
-        float dist = length(toMarble.xz);
-        float distFade = 1.0 - smoothstep(0.0, uMarbleRadius * 3.0, dist);
-
-        if (upFacing > 0.3 && reflectUV.x > 0.0 && reflectUV.x < 1.0 && reflectUV.y > 0.0 && reflectUV.y < 1.0) {
-          vec4 reflectColor = texture2D(uReflectionTex, reflectUV);
-
-          // If texture has content, blend it; otherwise show debug tint
-          if (reflectColor.a > 0.01) {
-            float reflectStrength = uReflectionAlpha * distFade * reflectColor.a;
-            color = mix(color, reflectColor.rgb, reflectStrength);
-          } else {
-            // Debug: show blue tint where reflection SHOULD appear (texture empty)
-            color = mix(color, vec3(0.3, 0.3, 0.8), 0.3 * distFade);
-          }
-        }
-      }
+      // RTT reflection disabled - using stencil-based reflection instead
 
       gl_FragColor = vec4(color, uAlpha);
     }`;
@@ -3237,8 +3208,7 @@
     }
 
     function drawMarbleEffects(boardM) {
-      // Skip marble reflection in MR mode - stencil occlusion not working reliably
-      if (isInVR) return;
+      // Re-enabled for VR - will fix stencil occlusion
 
       const supportLevel = getActiveLevel();
       if (!supportLevel) return;
@@ -4150,12 +4120,9 @@
         shadowEnabled = true;
       }
 
-      // Reflection pass (shared between eyes)
-      renderReflectionPass();
-      gl.activeTexture(gl.TEXTURE2);
-      gl.bindTexture(gl.TEXTURE_2D, reflectionTexture);
-      gl.uniform1i(uniforms.reflectionTex, 2);
-      gl.activeTexture(gl.TEXTURE0);
+      // RTT reflection disabled - using stencil-based reflection instead
+      // renderReflectionPass();
+      gl.uniform1f(uniforms.reflectionEnabled, 0.0);  // Disable RTT shader path
 
       // Get XR framebuffer
       const glLayer = xrSession.renderState.baseLayer;
@@ -4242,14 +4209,7 @@
 
           gl.depthMask(allowDepthWrite);
 
-          // Enable reflection for floor (MR mode)
-          if (isActiveLevel) {
-            gl.uniform1f(uniforms.reflectionEnabled, 1.0);
-            gl.uniform3f(uniforms.reflectionMarblePos, marble.pos.x, marble.y, marble.pos.z);
-            gl.uniform1f(uniforms.reflectionAlpha, 0.5);
-          }
           drawMesh(meshes.floor, matrix, palette.floor, [0.04,0.06,0.1], entry.alpha, level.hasHole ? mask : null, useShadows);
-          gl.uniform1f(uniforms.reflectionEnabled, 0.0); // Disable for walls
 
           // Draw walls FIRST so they write stencil=0 before reflections are drawn
           // No culling - walls block reflections from both viewing directions
@@ -4270,13 +4230,6 @@
 
           gl.stencilMask(0xFF);
           gl.stencilFunc(gl.ALWAYS, 2, 0xFF);
-
-          // Enable reflection for pedestals (MR mode)
-          if (isActiveLevel) {
-            gl.uniform1f(uniforms.reflectionEnabled, 1.0);
-            gl.uniform3f(uniforms.reflectionMarblePos, marble.pos.x, marble.y, marble.pos.z);
-            gl.uniform1f(uniforms.reflectionAlpha, 0.5);
-          }
 
           const pedestals = pedestalsForLevel(level);
           const isWild = isWildPedestal(level.index);
