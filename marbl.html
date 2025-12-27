@@ -331,7 +331,7 @@
     <h2>MARBL</h2>
     <p>Tilt your device to roll the marble.<br>Tap anywhere to rewind time.</p>
     <button id="mobile-start-btn">Start Game</button>
-    <span class="version">v0.102</span>
+    <span class="version">v0.103</span>
   </div>
   <div id="game-container">
     <canvas id="c" width="1024" height="1024"></canvas>
@@ -956,6 +956,7 @@
     attribute vec3 aNormal;
     uniform mat4 uMVP;
     uniform mat4 uModel;
+    uniform mat4 uWorldModel;  // Original model matrix without VR transform (for shadows)
     uniform mat4 uNormalMatrix;
     uniform mat4 uLightSpaceMatrix;
     uniform float uShadowOffsetY;
@@ -966,8 +967,10 @@
       vNormal = mat3(uNormalMatrix) * aNormal;
       vec4 worldPos = uModel * vec4(aPosition,1.0);
       vWorldPos = worldPos.xyz;
+      // Use world-space position (without VR transform) for shadow calculation
+      vec4 shadowWorldPos = uWorldModel * vec4(aPosition,1.0);
       // Transform to shadow-local coords (Y=0 at active level) before light space
-      vec4 shadowLocalPos = vec4(worldPos.x, worldPos.y - uShadowOffsetY, worldPos.z, 1.0);
+      vec4 shadowLocalPos = vec4(shadowWorldPos.x, shadowWorldPos.y - uShadowOffsetY, shadowWorldPos.z, 1.0);
       vLightSpacePos = uLightSpaceMatrix * shadowLocalPos;
       gl_Position = uMVP * vec4(aPosition,1.0);
     }`;
@@ -1182,6 +1185,7 @@
     const uniforms={
       mvp: gl.getUniformLocation(program, 'uMVP'),
       model: gl.getUniformLocation(program, 'uModel'),
+      worldModel: gl.getUniformLocation(program, 'uWorldModel'),
       normalMatrix: gl.getUniformLocation(program, 'uNormalMatrix'),
       lightSpaceMatrix: gl.getUniformLocation(program, 'uLightSpaceMatrix'),
       shadowOffsetY: gl.getUniformLocation(program, 'uShadowOffsetY'),
@@ -2996,6 +3000,7 @@
       const normalMatrix = mat4Transpose(mat4Invert(finalModel));
       gl.uniformMatrix4fv(uniforms.mvp, false, mvp);
       gl.uniformMatrix4fv(uniforms.model, false, finalModel);
+      gl.uniformMatrix4fv(uniforms.worldModel, false, model);  // Original world-space model for shadows
       gl.uniformMatrix4fv(uniforms.normalMatrix, false, normalMatrix);
     }
 
@@ -3128,14 +3133,17 @@
       // In MR mode, prevent reflections from affecting alpha (would create transparency)
       if (isInVR) gl.colorMask(true, true, true, false);
 
-      // Determine which surface the marble is on
+      // Determine blend between floor and pedestal reflections
       const pedHeight = pedestalHeightAt(marble.pos.x, marble.pos.z, supportLevel);
-      const onPedestal = pedHeight > marble.r * 0.5; // On pedestal if height is significant
+      // Smooth blend: 0 on floor, 1 on pedestal top, gradual on slope
+      const blendStart = marble.r * 0.1;  // Start blending at 10% of marble radius
+      const blendEnd = marble.r * 0.8;    // Fully on pedestal at 80% of marble radius
+      const pedBlend = Math.max(0, Math.min(1, (pedHeight - blendStart) / (blendEnd - blendStart)));
+      const floorBlend = 1 - pedBlend;
 
-      if (!onPedestal) {
-        // === FLOOR REFLECTION (stencil == 1) ===
-        // Simple vertical mirror on flat floor
-        const floorY = levelY; // Floor is at level base height
+      // === FLOOR REFLECTION (stencil == 1) ===
+      if (floorBlend > 0.01) {
+        const floorY = levelY;
         const floorDistAbove = marble.y - floorY;
         const floorReflectionY = floorY - floorDistAbove + 1.2;
 
@@ -3144,10 +3152,11 @@
         floorReflectionM = mat4Scale(floorReflectionM, [1, -1, 1]);
 
         gl.stencilFunc(gl.EQUAL, 1, 0xFF);
-        drawMesh(meshes.marble, floorReflectionM, [0.65,0.7,0.8], [0.05,0.05,0.08], baseAlpha, holeMask, false);
-      } else {
-        // === PEDESTAL REFLECTION (stencil == 2) ===
-        // Oriented reflection on sloped pedestal surfaces
+        drawMesh(meshes.marble, floorReflectionM, [0.65,0.7,0.8], [0.05,0.05,0.08], baseAlpha * floorBlend, holeMask, false);
+      }
+
+      // === PEDESTAL REFLECTION (stencil == 2) ===
+      if (pedBlend > 0.01) {
         const pedSurfaceY = levelY + pedHeight;
         const pedNormal = pedestalNormalAt(marble.pos.x, marble.pos.z, supportLevel);
         const pedOrient = mat4FromNormal(pedNormal);
@@ -3160,7 +3169,7 @@
         pedReflectionM = mat4Scale(pedReflectionM, [1, -1, 1]);
 
         gl.stencilFunc(gl.EQUAL, 2, 0xFF);
-        drawMesh(meshes.marble, pedReflectionM, [0.65,0.7,0.8], [0.05,0.05,0.08], baseAlpha, holeMask, false);
+        drawMesh(meshes.marble, pedReflectionM, [0.65,0.7,0.8], [0.05,0.05,0.08], baseAlpha * pedBlend, holeMask, false);
       }
 
       // Restore alpha writes
