@@ -3490,10 +3490,10 @@
         gl.depthMask(allowDepthWrite);
         drawMesh(meshes.floor, matrix, palette.floor, [0.04,0.06,0.1], entry.alpha, level.hasHole ? mask : null, useShadows);
 
-        // Draw wall reflections on the floor (while stencil = 1)
+        // Draw wall reflections on the floor (while stencil = 1) - skip in MR mode
         gl.stencilFunc(gl.EQUAL, 1, 0xFF);
         gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
-        drawWallFloorReflections(matrix, level, entry.alpha, palette.wall);
+        if (!isInVR) drawWallFloorReflections(matrix, level, entry.alpha, palette.wall);
 
         // Walls write 0 to stencil to block reflections where they cover
         gl.stencilFunc(gl.ALWAYS, 0, 0xFF);
@@ -3557,7 +3557,7 @@
       const marbleOrbAlpha = 1 - maxAlphaAbove;
       gl.depthMask(false);
       gl.disable(gl.DEPTH_TEST);
-      drawMarbleEffects(boardTiltM);
+      if (!isInVR) drawMarbleEffects(boardTiltM); // Skip marble reflection in MR mode
       gl.depthMask(true);
       gl.enable(gl.DEPTH_TEST);
       gl.clear(gl.DEPTH_BUFFER_BIT); // Clear depth so marble/orbs render on top, alpha handles fade
@@ -4035,7 +4035,7 @@
 
           gl.stencilFunc(gl.EQUAL, 1, 0xFF);
           gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
-          drawWallFloorReflections(matrix, level, entry.alpha, palette.wall);
+          if (!isInVR) drawWallFloorReflections(matrix, level, entry.alpha, palette.wall); // Skip wall reflections in MR mode
 
           gl.stencilFunc(gl.ALWAYS, 0, 0xFF);
           gl.stencilMask(0xFF);
@@ -4091,7 +4091,7 @@
 
         gl.depthMask(false);
         gl.disable(gl.DEPTH_TEST);
-        drawMarbleEffects(boardTiltM);
+        if (!isInVR) drawMarbleEffects(boardTiltM); // Skip marble reflection in MR mode
         gl.depthMask(true);
         gl.enable(gl.DEPTH_TEST);
         // In MR mode, keep wall depth for proper occlusion from side views
