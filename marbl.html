@@ -331,7 +331,7 @@
     <h2>MARBL</h2>
     <p>Tilt your device to roll the marble.<br>Tap anywhere to rewind time.</p>
     <button id="mobile-start-btn">Start Game</button>
-    <span class="version">v0.103d</span>
+    <span class="version">v0.103e</span>
   </div>
   <div id="game-container">
     <canvas id="c" width="1024" height="1024"></canvas>
@@ -386,7 +386,10 @@
      */
 
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-    let pixelatedMode = isMobile;
+    // XR-capable devices (like Quest) should use desktop-class rendering quality
+    const isXRCapable = !!navigator.xr;
+    const isDesktopClass = !isMobile || isXRCapable;
+    let pixelatedMode = isMobile && !isXRCapable;
 
     // ========================================
     // WEBXR STATE
@@ -988,6 +991,7 @@
     uniform float uAlpha;
     uniform sampler2D uShadowMap;
     uniform float uShadowEnabled;
+    uniform float uShadowMapSize;
     const int MAX_POINTS = 12;
     const int MAX_HOLES = 4;
     uniform int uPointCount;
@@ -1079,7 +1083,7 @@
       float compareDepth = projCoords.z - bias;
 
       // Simple 5x5 PCF for soft shadows (25 samples)
-      float texelSize = 1.0 / 2048.0;
+      float texelSize = 1.0 / uShadowMapSize;
       float shadow = 0.0;
       for (int x = -2; x <= 2; x++) {
         for (int y = -2; y <= 2; y++) {
@@ -1204,6 +1208,7 @@
       alpha: gl.getUniformLocation(program, 'uAlpha'),
       shadowMap: gl.getUniformLocation(program, 'uShadowMap'),
       shadowEnabled: gl.getUniformLocation(program, 'uShadowEnabled'),
+      shadowMapSize: gl.getUniformLocation(program, 'uShadowMapSize'),
       pointCount: gl.getUniformLocation(program, 'uPointCount'),
       pointPos: gl.getUniformLocation(program, 'uPointPos'),
       pointIntensity: gl.getUniformLocation(program, 'uPointIntensity'),
@@ -1226,7 +1231,7 @@
     // ========================================
     // SHADOW MAPPING SETUP
     // ========================================
-    const SHADOW_MAP_SIZE = isMobile ? 1024 : 2048;
+    const SHADOW_MAP_SIZE = isDesktopClass ? 2048 : 1024;
 
     // Shadow depth shaders (render from light's perspective)
     const shadowVsSource = `
@@ -3029,6 +3034,7 @@
       gl.bindTexture(gl.TEXTURE_2D, shadowDepthTexture);
       gl.uniform1i(uniforms.shadowMap, 0);
       gl.uniform1f(uniforms.shadowEnabled, (shadowEnabled && shadowReceiveEnabled && receiveShadow) ? 1.0 : 0.0);
+      gl.uniform1f(uniforms.shadowMapSize, SHADOW_MAP_SIZE);
       // Validate color array to prevent NaN/undefined issues
       const safeColor = Array.isArray(color) && color.length >= 3
         ? [
