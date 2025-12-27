@@ -3042,16 +3042,23 @@
       if (holeMask) {
         const holes = Array.isArray(holeMask.holes) ? holeMask.holes : [holeMask];
         const count = Math.min(MAX_HOLES, holes.length);
+        // In VR mode, hole centers/radii must be transformed to match vertex space
+        const vrScale = currentVRMatrices ? VR_WORLD_SCALE : 1;
+        const vrOffsetX = currentVRMatrices ? VR_BOARD_OFFSET.x : 0;
+        const vrOffsetY = currentVRMatrices ? VR_BOARD_OFFSET.y : 0;
+        const vrOffsetZ = currentVRMatrices ? VR_BOARD_OFFSET.z : 0;
         for (let i = 0; i < count; i++) {
           const h = holes[i] || {};
           const progress = Math.max(0, Math.min(1, h.progress ?? 1));
           const radius = (h.radius || 0) * progress;
           const c = h.center || { x: 0, y: 0, z: 0 };
-          holeCentersArr[i * 3 + 0] = c.x || 0;
-          holeCentersArr[i * 3 + 1] = c.y || 0;
-          holeCentersArr[i * 3 + 2] = c.z || 0;
-          holeRadiiArr[i] = radius;
-          holeSoftnessArr[i] = h.softness ?? 0;
+          // Transform hole center to match VR-transformed vertex space
+          holeCentersArr[i * 3 + 0] = ((c.x || 0) * vrScale) + vrOffsetX;
+          holeCentersArr[i * 3 + 1] = ((c.y || 0) * vrScale) + vrOffsetY;
+          holeCentersArr[i * 3 + 2] = ((c.z || 0) * vrScale) + vrOffsetZ;
+          // Scale radius and softness for VR
+          holeRadiiArr[i] = radius * vrScale;
+          holeSoftnessArr[i] = (h.softness ?? 0) * vrScale;
         }
         gl.uniform1i(uniforms.holeCount, count);
         gl.uniform3fv(uniforms.holeCenters, holeCentersArr);
@@ -3950,26 +3957,9 @@
         const heightBelow = Math.max(0, level.y - marble.y);
         const approachFade = hasHoleOpen ? 1 : heightAbove <= 0 ? 1 : Math.max(0, Math.min(1, 1 - (heightAbove / approachFadeDepth)));
         const departureFade = heightBelow <= 0 ? 1 : Math.max(0, Math.min(1, 1 - (heightBelow / fadeDepth)));
-        let fade = Math.min(approachFade, departureFade);
-        // VR fix: ensure active level stays visible while marble is on or above it
-        if (level.index === activeLevelIndex && marble.y >= level.y - marble.r) {
-          fade = Math.max(fade, departureFade);
-        }
+        const fade = Math.min(approachFade, departureFade);
         if (fade <= 0.02) continue;
-        // VR fix: get holes based on this level's collapse state, not just holesForLevel
-        const thisCollapse = collapseStateFor(level.index);
-        const collapseProgress = thisCollapse?.started ? collapseEase(thisCollapse.progress) : 0;
-        let levelHoles = holesForLevel(level);
-        // If collapse is active but holesForLevel returned empty, build holes manually
-        if (level.hasHole && collapseProgress > 0 && levelHoles.length === 0 && thisCollapse?.pedestals) {
-          levelHoles = thisCollapse.pedestals
-            .map(idx => {
-              const center = pedestalReferencePositions[idx];
-              if (!center) return null;
-              return { center, radius: centralHoleRadius * collapseProgress, softness: centralHoleSoftness };
-            })
-            .filter(Boolean);
-        }
+        const levelHoles = holesForLevel(level);
         const mask = level.hasHole && levelHoles.length ? { holes: levelHoles } : null;
         boardEntries.push({ level, matrix: boardTransform(level.y), mask, alpha: fade });
       }
