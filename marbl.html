@@ -1610,6 +1610,8 @@
     }
 
     function pushHistory() {
+      // Don't record history on mobile until game is started
+      if (isMobile && !mobileGameStarted) return;
       // Record every 2nd frame to reduce memory usage (2x rewind speed compensates)
       historyFrameCounter++;
       if (historyFrameCounter % 2 !== 0) return;
