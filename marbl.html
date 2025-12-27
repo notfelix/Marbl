@@ -324,7 +324,7 @@
     <canvas id="c" width="1024" height="1024"></canvas>
     <div id="rewind-bar-container"></div>
   </div>
-  <button id="vr-button">Enter VR</button>
+  <button id="vr-button">Enter MR</button>
   <div id="level-picker">
     <h1>MARBL</h1>
     <p>No levels found. Load a level file to start playing, or place <code>marbl-levels.js</code> in the same directory.</p>
@@ -384,7 +384,8 @@
 
     // VR scaling: board is ~920 units, want ~0.45m in VR
     const VR_WORLD_SCALE = 0.00049;
-    const VR_BOARD_OFFSET = { x: 0, y: -0.3, z: -0.6 }; // 60cm in front, 30cm below eye level
+    // Position board at table height (0.75m from floor), centered in front
+    const VR_BOARD_OFFSET = { x: 0, y: 0.75, z: -0.5 }; // 50cm in front, at table height
 
     // VR controller input
     const vrInput = { tiltX: 0, tiltY: 0, rewindPressed: false };
@@ -3654,14 +3655,18 @@
         return false;
       }
       try {
-        const supported = await navigator.xr.isSessionSupported('immersive-vr');
+        // Prefer AR (passthrough MR) but fall back to VR
+        let supported = await navigator.xr.isSessionSupported('immersive-ar');
+        if (!supported) {
+          supported = await navigator.xr.isSessionSupported('immersive-vr');
+        }
         if (supported) {
           const vrButton = document.getElementById('vr-button');
           if (vrButton) {
             vrButton.style.display = 'block';
             vrButton.addEventListener('click', enterVR);
           }
-          console.log('WebXR VR supported');
+          console.log('WebXR supported');
         }
         return supported;
       } catch (err) {
@@ -3674,15 +3679,26 @@
       if (xrSession) return;
 
       try {
-        xrSession = await navigator.xr.requestSession('immersive-vr', {
-          requiredFeatures: ['local-floor'],
-          optionalFeatures: ['hand-tracking']
-        });
+        // Try AR (passthrough) first, fall back to VR
+        let sessionType = 'immersive-ar';
+        try {
+          xrSession = await navigator.xr.requestSession('immersive-ar', {
+            requiredFeatures: ['local-floor'],
+            optionalFeatures: ['hand-tracking']
+          });
+        } catch (arErr) {
+          console.log('AR not available, falling back to VR');
+          sessionType = 'immersive-vr';
+          xrSession = await navigator.xr.requestSession('immersive-vr', {
+            requiredFeatures: ['local-floor'],
+            optionalFeatures: ['hand-tracking']
+          });
+        }
 
         xrSession.addEventListener('end', onXRSessionEnd);
 
-        // Create XRWebGLLayer
-        const xrGLLayer = new XRWebGLLayer(xrSession, gl);
+        // Create XRWebGLLayer with alpha for passthrough transparency
+        const xrGLLayer = new XRWebGLLayer(xrSession, gl, { alpha: true });
         xrSession.updateRenderState({ baseLayer: xrGLLayer });
 
         // Get reference space - 'local-floor' provides floor-level origin
@@ -3929,15 +3945,20 @@
           view: view.transform.inverse.matrix
         };
 
-        // Reset WebGL state and clear
+        // Reset WebGL state
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         gl.depthMask(true);
         gl.depthFunc(gl.LESS);
         gl.enable(gl.DEPTH_TEST);
         gl.disable(gl.CULL_FACE);
-        gl.clearColor(0.02, 0.03, 0.06, 1.0); // Dark background for VR
+
+        // Use scissor test to only clear this eye's viewport (prevents clearing other eye)
+        gl.enable(gl.SCISSOR_TEST);
+        gl.scissor(viewport.x, viewport.y, viewport.width, viewport.height);
+        gl.clearColor(0, 0, 0, 0); // Transparent for passthrough MR
         gl.clearStencil(0);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
+        gl.disable(gl.SCISSOR_TEST);
 
         // Render boards
         for (const entry of boardEntries) {
@@ -4024,7 +4045,11 @@
         drawMarbleEffects(boardTiltM);
         gl.depthMask(true);
         gl.enable(gl.DEPTH_TEST);
+        // Use scissor to only clear depth for this eye
+        gl.enable(gl.SCISSOR_TEST);
+        gl.scissor(viewport.x, viewport.y, viewport.width, viewport.height);
         gl.clear(gl.DEPTH_BUFFER_BIT);
+        gl.disable(gl.SCISSOR_TEST);
 
         let marbleM = mat4Translate(marbleTiltM, [marble.pos.x, marble.y - activeLevelY, marble.pos.z]);
         drawMesh(meshes.marble, marbleM, [0.7,0.7,0.7], [0.1,0.1,0.1], marbleOrbAlpha, null, false);
