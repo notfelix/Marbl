@@ -391,7 +391,7 @@
      * COORDINATES: Y is up, levels stack downward (negative Y), camera looks from above
      */
 
-    const GAME_VERSION = 'v0.112b';
+    const GAME_VERSION = 'v0.113';
 
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     // XR-capable devices (like Quest) should use desktop-class rendering quality
@@ -412,10 +412,13 @@
     // VR scaling: board is ~920 units, want ~0.45m in VR
     const VR_WORLD_SCALE = 0.00049;
     // Position board at table height (0.75m from floor), centered in front
-    const VR_BOARD_OFFSET = { x: 0, y: 0.75, z: -0.5 }; // 50cm in front, at table height
+    let VR_BOARD_OFFSET = { x: 0, y: 0.75, z: -0.5 }; // 50cm in front, at table height
+    const VR_HEIGHT_STEP = 0.0254; // 1 inch in meters
 
     // VR controller input
-    const vrInput = { tiltX: 0, tiltY: 0, rewindPressed: false };
+    const vrInput = { tiltX: 0, tiltY: 0, rewindPressed: false, aPressed: false, bPressed: false };
+    let vrButtonAWasPressed = false;
+    let vrButtonBWasPressed = false;
 
     // Current VR matrices (set during VR rendering, null otherwise)
     let currentVRMatrices = null;
@@ -3656,6 +3659,8 @@
       vrInput.tiltX = 0;
       vrInput.tiltY = 0;
       vrInput.rewindPressed = false;
+      vrInput.aPressed = false;
+      vrInput.bPressed = false;
 
       if (!xrSession) return;
 
@@ -3686,6 +3691,14 @@
         if (gp.buttons.length > 0 && gp.buttons[0].pressed) {
           vrInput.rewindPressed = true;
         }
+
+        // A button (index 4) - lower height, B button (index 5) - raise height
+        if (gp.buttons.length > 4 && gp.buttons[4].pressed) {
+          vrInput.aPressed = true;
+        }
+        if (gp.buttons.length > 5 && gp.buttons[5].pressed) {
+          vrInput.bPressed = true;
+        }
       }
     }
 
@@ -3708,6 +3721,16 @@
       } else {
         keys.delete('Space');
       }
+
+      // Height adjustment: A button lowers, B button raises (edge-triggered)
+      if (vrInput.aPressed && !vrButtonAWasPressed) {
+        VR_BOARD_OFFSET.y -= VR_HEIGHT_STEP;
+      }
+      if (vrInput.bPressed && !vrButtonBWasPressed) {
+        VR_BOARD_OFFSET.y += VR_HEIGHT_STEP;
+      }
+      vrButtonAWasPressed = vrInput.aPressed;
+      vrButtonBWasPressed = vrInput.bPressed;
 
       // Run physics (same as frame())
       const now = time * 0.001;
