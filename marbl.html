@@ -391,7 +391,7 @@
      * COORDINATES: Y is up, levels stack downward (negative Y), camera looks from above
      */
 
-    const GAME_VERSION = 'v0.108';
+    const GAME_VERSION = 'v0.110';
 
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     // XR-capable devices (like Quest) should use desktop-class rendering quality
@@ -2671,8 +2671,9 @@
       //   right:  positive = light from right (shadow falls left)
       //   up:     positive = light from top of screen (shadow falls toward bottom)
       //   height: light height above scene (affects shadow length)
-      const right = 0.4;
-      const up = 0.3;
+      // In MR mode, use straight-down light so shadow looks correct from any viewing angle
+      const right = isInVR ? 0 : 0.4;
+      const up = isInVR ? 0 : 0.3;
       const height = 1.0;
 
       const lightDistance = 2000;
@@ -2683,8 +2684,9 @@
       };
       const lightTarget = { x: 0, y: 0, z: 0 };
 
-      // Up vector tilted to match desired shadow orientation
-      const lightView = mat4LookAt(lightPos, lightTarget, { x: -0.5, y: 0, z: 1 });
+      // Up vector tilted to match desired shadow orientation (use Z-up for straight-down light in MR)
+      const lightUp = isInVR ? { x: 0, y: 0, z: 1 } : { x: -0.5, y: 0, z: 1 };
+      const lightView = mat4LookAt(lightPos, lightTarget, lightUp);
 
       const orthoSize = 1200;
       const lightProj = mat4Ortho(-orthoSize, orthoSize, -orthoSize, orthoSize, 1, lightDistance * 3);
