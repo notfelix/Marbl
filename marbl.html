@@ -102,6 +102,25 @@
       user-select: none;
       -webkit-touch-callout: none;
     }
+    /* VR button */
+    #vr-button {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      padding: 0.75rem 1.5rem;
+      font-size: 1rem;
+      font-weight: 500;
+      color: #e5ecff;
+      background: linear-gradient(135deg, rgba(110, 168, 254, 0.3) 0%, rgba(167, 139, 250, 0.3) 100%);
+      border: 2px solid rgba(110, 168, 254, 0.5);
+      border-radius: 12px;
+      cursor: pointer;
+      z-index: 50;
+      display: none;
+    }
+    #vr-button:hover {
+      background: linear-gradient(135deg, rgba(110, 168, 254, 0.5) 0%, rgba(167, 139, 250, 0.5) 100%);
+    }
     /* Embedded mode (MarbLD) - scale down to show canvas + rewind bar */
     body.embedded {
       place-items: start center;
@@ -305,6 +324,7 @@
     <canvas id="c" width="1024" height="1024"></canvas>
     <div id="rewind-bar-container"></div>
   </div>
+  <button id="vr-button">Enter VR</button>
   <div id="level-picker">
     <h1>MARBL</h1>
     <p>No levels found. Load a level file to start playing, or place <code>marbl-levels.js</code> in the same directory.</p>
@@ -354,10 +374,28 @@
 
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     let pixelatedMode = isMobile;
+
+    // ========================================
+    // WEBXR STATE
+    // ========================================
+    let xrSession = null;
+    let xrRefSpace = null;
+    let isInVR = false;
+
+    // VR scaling: board is ~920 units, want ~0.45m in VR
+    const VR_WORLD_SCALE = 0.00049;
+    const VR_BOARD_OFFSET = { x: 0, y: -0.3, z: -0.6 }; // 60cm in front, 30cm below eye level
+
+    // VR controller input
+    const vrInput = { tiltX: 0, tiltY: 0, rewindPressed: false };
+
+    // Current VR matrices (set during VR rendering, null otherwise)
+    let currentVRMatrices = null;
+
     const starCanvas = document.getElementById('stars');
     const canvas = document.getElementById('c');
     const starCtx = starCanvas.getContext('2d');
-    const gl = canvas.getContext('webgl2', { antialias: true, alpha: true, stencil: true });
+    const gl = canvas.getContext('webgl2', { antialias: true, alpha: true, stencil: true, xrCompatible: true });
     if (!gl) {
       alert('WebGL2 not supported');
       throw new Error('WebGL2 not supported');
@@ -2655,8 +2693,11 @@
       target.x = 0;
       target.y = 0;
 
-      // Use gyro input on mobile, keyboard on desktop
-      if (gyroEnabled) {
+      // Use VR controller input in VR, gyro on mobile, keyboard on desktop
+      if (isInVR) {
+        target.x = vrInput.tiltX;
+        target.y = -vrInput.tiltY; // Invert Y so pushing forward tilts forward
+      } else if (gyroEnabled) {
         target.x = gyroTilt.x;
         target.y = gyroTilt.y;
       } else {
@@ -2919,14 +2960,28 @@
     }
 
     function setMatrices(model) {
-      const aspect = canvas.width / canvas.height;
-      const proj = mat4Perspective(Math.PI / 4, aspect, 10, 5000);
-      const view = mat4LookAt(camera.pos, camera.target, { x: 0, y: 0, z: 1 });
+      let proj, view, finalModel = model;
+
+      if (currentVRMatrices) {
+        // Use VR matrices and apply world transform
+        proj = currentVRMatrices.proj;
+        view = currentVRMatrices.view;
+        // Apply VR world transform: translate then scale
+        let vrTransform = mat4Translate(mat4Identity(), [VR_BOARD_OFFSET.x, VR_BOARD_OFFSET.y, VR_BOARD_OFFSET.z]);
+        vrTransform = mat4Scale(vrTransform, [VR_WORLD_SCALE, VR_WORLD_SCALE, VR_WORLD_SCALE]);
+        finalModel = mat4Multiply(vrTransform, model);
+      } else {
+        // Original camera-based matrices
+        const aspect = canvas.width / canvas.height;
+        proj = mat4Perspective(Math.PI / 4, aspect, 10, 5000);
+        view = mat4LookAt(camera.pos, camera.target, { x: 0, y: 0, z: 1 });
+      }
+
       const vp = mat4Multiply(proj, view);
-      const mvp = mat4Multiply(vp, model);
-      const normalMatrix = mat4Transpose(mat4Invert(model));
+      const mvp = mat4Multiply(vp, finalModel);
+      const normalMatrix = mat4Transpose(mat4Invert(finalModel));
       gl.uniformMatrix4fv(uniforms.mvp, false, mvp);
-      gl.uniformMatrix4fv(uniforms.model, false, model);
+      gl.uniformMatrix4fv(uniforms.model, false, finalModel);
       gl.uniformMatrix4fv(uniforms.normalMatrix, false, normalMatrix);
     }
 
@@ -3589,6 +3644,447 @@
       }
     }
 
+    // ========================================
+    // WEBXR SETUP
+    // ========================================
+
+    async function checkXRSupport() {
+      if (!navigator.xr) {
+        console.log('WebXR not available');
+        return false;
+      }
+      try {
+        const supported = await navigator.xr.isSessionSupported('immersive-vr');
+        if (supported) {
+          const vrButton = document.getElementById('vr-button');
+          if (vrButton) {
+            vrButton.style.display = 'block';
+            vrButton.addEventListener('click', enterVR);
+          }
+          console.log('WebXR VR supported');
+        }
+        return supported;
+      } catch (err) {
+        console.log('WebXR check failed:', err);
+        return false;
+      }
+    }
+
+    async function enterVR() {
+      if (xrSession) return;
+
+      try {
+        xrSession = await navigator.xr.requestSession('immersive-vr', {
+          requiredFeatures: ['local-floor'],
+          optionalFeatures: ['hand-tracking']
+        });
+
+        xrSession.addEventListener('end', onXRSessionEnd);
+
+        // Create XRWebGLLayer
+        const xrGLLayer = new XRWebGLLayer(xrSession, gl);
+        xrSession.updateRenderState({ baseLayer: xrGLLayer });
+
+        // Get reference space - 'local-floor' provides floor-level origin
+        xrRefSpace = await xrSession.requestReferenceSpace('local-floor');
+
+        isInVR = true;
+        hideUIForVR();
+
+        // Stop the regular animation loop
+        stopLoop();
+
+        // Start XR frame loop
+        xrSession.requestAnimationFrame(xrFrameLoop);
+
+        console.log('Entered VR mode');
+      } catch (err) {
+        console.error('Failed to enter VR:', err);
+        xrSession = null;
+      }
+    }
+
+    function onXRSessionEnd() {
+      console.log('XR session ended');
+      isInVR = false;
+      xrSession = null;
+      xrRefSpace = null;
+
+      showUIAfterVR();
+
+      // Resume regular rendering
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      resize();
+      resumeLoop(true);
+    }
+
+    function hideUIForVR() {
+      const starsEl = document.getElementById('stars');
+      if (starsEl) starsEl.style.display = 'none';
+
+      const rewindBar = document.getElementById('rewind-bar-container');
+      if (rewindBar) rewindBar.style.display = 'none';
+
+      const hud = document.getElementById('hud');
+      if (hud) hud.style.display = 'none';
+
+      const vrButton = document.getElementById('vr-button');
+      if (vrButton) vrButton.style.display = 'none';
+
+      const levelPicker = document.getElementById('level-picker');
+      if (levelPicker) levelPicker.classList.add('hidden');
+    }
+
+    function showUIAfterVR() {
+      const starsEl = document.getElementById('stars');
+      if (starsEl) starsEl.style.display = '';
+
+      const rewindBar = document.getElementById('rewind-bar-container');
+      if (rewindBar) rewindBar.style.display = '';
+
+      const hud = document.getElementById('hud');
+      if (hud) hud.style.display = '';
+
+      const vrButton = document.getElementById('vr-button');
+      if (vrButton) vrButton.style.display = 'block';
+    }
+
+    function pollVRControllers() {
+      vrInput.tiltX = 0;
+      vrInput.tiltY = 0;
+      vrInput.rewindPressed = false;
+
+      if (!xrSession) return;
+
+      for (const source of xrSession.inputSources) {
+        if (!source.gamepad) continue;
+        const gp = source.gamepad;
+
+        if (source.handedness === 'left') {
+          // Thumbstick for tilt - Quest uses axes 2,3, fallback to 0,1
+          if (gp.axes.length >= 4) {
+            vrInput.tiltX = gp.axes[2] || 0;
+            vrInput.tiltY = gp.axes[3] || 0;
+          } else if (gp.axes.length >= 2) {
+            vrInput.tiltX = gp.axes[0] || 0;
+            vrInput.tiltY = gp.axes[1] || 0;
+          }
+        }
+
+        // Either trigger for rewind
+        if (gp.buttons.length > 0 && gp.buttons[0].pressed) {
+          vrInput.rewindPressed = true;
+        }
+      }
+
+      // Apply dead zone
+      const deadzone = 0.15;
+      if (Math.abs(vrInput.tiltX) < deadzone) vrInput.tiltX = 0;
+      if (Math.abs(vrInput.tiltY) < deadzone) vrInput.tiltY = 0;
+    }
+
+    function xrFrameLoop(time, xrFrame) {
+      if (!xrSession) return;
+
+      // Schedule next frame first
+      xrSession.requestAnimationFrame(xrFrameLoop);
+
+      // Get viewer pose
+      const pose = xrFrame.getViewerPose(xrRefSpace);
+      if (!pose) return;
+
+      // Poll controllers and apply VR input
+      pollVRControllers();
+
+      // Apply trigger to rewind
+      if (vrInput.rewindPressed) {
+        keys.add('Space');
+      } else {
+        keys.delete('Space');
+      }
+
+      // Run physics (same as frame())
+      const now = time * 0.001;
+      const delta = now - (xrFrameLoop.last || now);
+      xrFrameLoop.last = now;
+
+      physicsAccumulator += Math.min(delta, 0.1);
+
+      const rewinding = keys.has('Space');
+      if (rewinding) {
+        let rewindStuck = rewindBlockedPersist || history.length <= 1;
+        while (physicsAccumulator >= FIXED_DT) {
+          rewindAccumulator += rewindSpeed * FIXED_DT * 60;
+          let rewindBlocked = false;
+          while (rewindAccumulator >= 1) {
+            rewindAccumulator -= 1;
+            if (rewindStep()) {
+              rewindBlocked = true;
+              rewindAccumulator = 0;
+              break;
+            } else {
+              rewindBlockedPersist = false;
+            }
+          }
+          if (rewindBlocked || history.length <= 1) {
+            rewindStuck = true;
+            rewindBlockedPersist = rewindBlocked;
+          }
+          refreshSupport();
+          updateCollapses(FIXED_DT);
+          if (history.length > 1 && !rewindBlocked) {
+            updateWildOrbs(FIXED_DT);
+          }
+          physicsAccumulator -= FIXED_DT;
+        }
+        if (Number.isFinite(delta) && !rewindStuck) orbAnimTime += delta;
+      } else {
+        rewindAccumulator = 0;
+        rewindBlockedPersist = false;
+        if (starsReversed) {
+          reverseStarVelocities();
+          starsReversed = false;
+        }
+        while (physicsAccumulator >= FIXED_DT) {
+          updateInput(FIXED_DT);
+          updatePhysics(FIXED_DT);
+          pushHistory();
+          physicsAccumulator -= FIXED_DT;
+        }
+        if (Number.isFinite(delta)) orbAnimTime += delta;
+      }
+
+      const dt = Math.min(delta, 0.1);
+      updateCamera(dt);
+
+      // Compute active level for rendering
+      const activeLevel = getActiveLevel();
+      const activeLevelY = activeLevel?.y || 0;
+      const activeLevelIndex = activeLevel?.index ?? 0;
+
+      if (activeLevelIndex !== prevActiveLevelIndex) {
+        smoothedMarbleTilt = 0;
+        prevActiveLevelIndex = activeLevelIndex;
+      }
+      const targetMarbleTilt = Math.max(0, Math.min(1, currentSupport?.support ?? 0));
+      smoothedMarbleTilt += (targetMarbleTilt - smoothedMarbleTilt) * Math.min(1, dt * 5);
+      const marbleTiltScale = smoothedMarbleTilt;
+
+      updateLightsUniforms();
+
+      // Shadow pass (shared between eyes)
+      shadowOffsetY = activeLevelY;
+      {
+        const marbleTiltM = boardTransform(0, marbleTiltScale);
+        const marbleLocalY = marble.y - activeLevelY;
+        const marbleModel = mat4Translate(marbleTiltM, [marble.pos.x, marbleLocalY, marble.pos.z]);
+        renderShadowPass(marbleModel);
+        shadowEnabled = true;
+      }
+
+      // Get XR framebuffer
+      const glLayer = xrSession.renderState.baseLayer;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, glLayer.framebuffer);
+
+      // Prepare board entries (shared between eyes)
+      const fadeDepth = levelDrop * 0.75;
+      function isLevelUnlocked(level) {
+        if (!level) return false;
+        if (level.index === 0) return true;
+        const aboveCollapse = collapseStateFor(level.index - 1);
+        const hasHoleOpen = (aboveCollapse?.progress ?? 0) > 0;
+        return hasHoleOpen || marble.y <= level.y + approachFadeDepth;
+      }
+
+      const boardEntries = [];
+      for (const level of levels) {
+        if (!isLevelUnlocked(level)) continue;
+        const aboveCollapse = collapseStateFor(level.index - 1);
+        const hasHoleOpen = (aboveCollapse?.progress ?? 0) > 0;
+        const heightAbove = Math.max(0, marble.y - level.y - marble.r * 2);
+        const heightBelow = Math.max(0, level.y - marble.y);
+        const approachFade = hasHoleOpen ? 1 : heightAbove <= 0 ? 1 : Math.max(0, Math.min(1, 1 - (heightAbove / approachFadeDepth)));
+        const departureFade = heightBelow <= 0 ? 1 : Math.max(0, Math.min(1, 1 - (heightBelow / fadeDepth)));
+        const fade = Math.min(approachFade, departureFade);
+        if (fade <= 0.02) continue;
+        const levelHoles = holesForLevel(level);
+        const mask = level.hasHole && levelHoles.length ? { holes: levelHoles } : null;
+        boardEntries.push({ level, matrix: boardTransform(level.y), mask, alpha: fade });
+      }
+      boardEntries.sort((a, b) => a.level.y - b.level.y);
+
+      const maxAlphaAbove = boardEntries
+        .filter(e => e.level.index < activeLevelIndex)
+        .filter(e => !isPointInHole(e.level, marble.pos.x, marble.pos.z))
+        .reduce((max, e) => Math.max(max, e.alpha), 0);
+
+      // Render each eye
+      for (const view of pose.views) {
+        const viewport = glLayer.getViewport(view);
+        gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
+
+        // Set VR matrices for this eye
+        currentVRMatrices = {
+          proj: view.projectionMatrix,
+          view: view.transform.inverse.matrix
+        };
+
+        // Reset WebGL state and clear
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.depthMask(true);
+        gl.depthFunc(gl.LESS);
+        gl.enable(gl.DEPTH_TEST);
+        gl.disable(gl.CULL_FACE);
+        gl.clearColor(0.02, 0.03, 0.06, 1.0); // Dark background for VR
+        gl.clearStencil(0);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
+
+        // Render boards
+        for (const entry of boardEntries) {
+          const { level, matrix, mask } = entry;
+          const levelIdx = Number.isFinite(level?.index) ? level.index : 0;
+          const rawPalette = boardColors[levelIdx] || boardColors[0] || defaultBoardColors;
+          const palette = {
+            floor: rawPalette.floor || defaultBoardColors.floor,
+            wall: rawPalette.wall || defaultBoardColors.wall,
+            pedestal: rawPalette.pedestal || defaultBoardColors.pedestal,
+            pedestalHole: rawPalette.pedestalHole || defaultBoardColors.pedestalHole
+          };
+          const allowDepthWrite = entry.alpha > 0.02;
+          const isActiveLevel = level.index === activeLevelIndex;
+          const marbleAboveLevel = marble.y > level.y && marble.y < level.y + levelDrop;
+          const useShadows = (isActiveLevel || marbleAboveLevel) && entry.alpha > 0.6;
+
+          gl.enable(gl.STENCIL_TEST);
+          gl.stencilFunc(gl.ALWAYS, 1, 0xFF);
+          gl.stencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
+          gl.stencilMask(0xFF);
+
+          gl.depthMask(allowDepthWrite);
+          drawMesh(meshes.floor, matrix, palette.floor, [0.04,0.06,0.1], entry.alpha, level.hasHole ? mask : null, useShadows);
+
+          gl.stencilFunc(gl.EQUAL, 1, 0xFF);
+          gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+          drawWallFloorReflections(matrix, level, entry.alpha, palette.wall);
+
+          gl.stencilFunc(gl.ALWAYS, 0, 0xFF);
+          gl.stencilMask(0xFF);
+
+          gl.enable(gl.CULL_FACE);
+          for(const w of meshes.walls) drawMesh(w, matrix, palette.wall, [0.04,0.05,0.09], entry.alpha, null, useShadows);
+          if (level.wallMeshes && Array.isArray(level.wallMeshes)) {
+            for(const w of level.wallMeshes) if (w) drawMesh(w, matrix, palette.wall, [0.04,0.05,0.09], entry.alpha, null, useShadows);
+          }
+          gl.disable(gl.CULL_FACE);
+
+          gl.stencilMask(0xFF);
+          gl.stencilFunc(gl.ALWAYS, 2, 0xFF);
+
+          const pedestals = pedestalsForLevel(level);
+          const isWild = isWildPedestal(level.index);
+          for(const { pos, idx } of pedestals) {
+            const height = pedestalHeightForIndex(idx, level);
+            const pedCollapse = collapseProgressFor(level.index, idx);
+            const pedMesh = pedCollapse > 0 ? meshes.pedestalHole : meshes.pedestal;
+            const pedAlpha = pedCollapse > 0 ? entry.alpha * pedestalCollapseAlpha(pedCollapse) : entry.alpha;
+            if (pedAlpha <= 0.02) continue;
+            let pedM = mat4Translate(matrix, [pos.x, 0, pos.z]);
+            pedM = mat4Scale(pedM, [1, height / pedestal.height, 1]);
+            const safePedestal = Array.isArray(palette.pedestal) ? palette.pedestal : defaultBoardColors.pedestal;
+            const safePedestalHole = Array.isArray(palette.pedestalHole) ? palette.pedestalHole : defaultBoardColors.pedestalHole;
+            let pedColor = pedCollapse > 0
+              ? safePedestal.map((c, i) => (c || 0) + ((safePedestalHole[i] || 0) - (c || 0)) * pedCollapse)
+              : [...safePedestal];
+            if (isWild) {
+              const t = orbAnimTime * 0.8 + idx * 0.5;
+              const wave = Number.isFinite(t) ? (Math.sin(t * Math.PI * 2) + 1) * 0.5 : 0.5;
+              const wildColor = [wave * 0.7, 0.3, 0.6 + wave * 0.3];
+              pedColor = pedColor.map((c, i) => (c || 0) * 0.4 + wildColor[i] * 0.6);
+            }
+            const pedUseShadows = (isActiveLevel || marbleAboveLevel) && pedAlpha > 0.6;
+            if (pedCollapse > 0) gl.depthMask(false);
+            drawMesh(pedMesh, pedM, pedColor, [0.05,0.06,0.1], pedAlpha, null, pedUseShadows);
+            if (pedCollapse > 0) gl.depthMask(allowDepthWrite);
+          }
+
+          gl.disable(gl.STENCIL_TEST);
+          gl.stencilMask(0xFF);
+
+          drawOrbs(matrix, orbAnimTime, level.index, entry.alpha, { includeFollowing: false });
+        }
+        gl.depthMask(true);
+
+        // Draw marble
+        const boardTiltM = boardTransform(activeLevelY);
+        const marbleTiltM = marbleTiltScale >= 0.999 ? boardTiltM : boardTransform(activeLevelY, marbleTiltScale);
+        const marbleOrbAlpha = 1 - maxAlphaAbove;
+
+        gl.depthMask(false);
+        gl.disable(gl.DEPTH_TEST);
+        drawMarbleEffects(boardTiltM);
+        gl.depthMask(true);
+        gl.enable(gl.DEPTH_TEST);
+        gl.clear(gl.DEPTH_BUFFER_BIT);
+
+        let marbleM = mat4Translate(marbleTiltM, [marble.pos.x, marble.y - activeLevelY, marble.pos.z]);
+        drawMesh(meshes.marble, marbleM, [0.7,0.7,0.7], [0.1,0.1,0.1], marbleOrbAlpha, null, false);
+
+        // Draw orbs on active level
+        const activeEntry = boardEntries.find(e => e.level.index === activeLevel?.index);
+        if (activeEntry) {
+          drawOrbs(activeEntry.matrix, orbAnimTime, activeEntry.level.index, activeEntry.alpha * marbleOrbAlpha, { includeFollowing: false });
+        }
+
+        // Draw following orbs
+        const followingLevels = new Set();
+        for (const orb of orbs) {
+          if (!orb.following) continue;
+          if (orb.collected && orb.dissolve >= 1) continue;
+          const idx = orb.renderLevel ?? activeLevel?.index ?? orb.level;
+          if (!Number.isFinite(idx)) continue;
+          followingLevels.add(idx);
+        }
+        for (const idx of followingLevels) {
+          const lvl = levels[idx] || levels[0];
+          const flatBoard = boardTransform(lvl?.y || 0, 0);
+          const tiltedBoard = boardTransform(lvl?.y || 0);
+          const flatInv = mat4Invert(flatBoard);
+          const liftOffset = (orb, _renderLevelIndex, followEase=1) => {
+            const pos = [orb.pos.x, orb.pos.y, orb.pos.z, 1];
+            const tilted = mat4TransformVec4(tiltedBoard, pos);
+            const flat = mat4TransformVec4(flatBoard, pos);
+            const tiltLift = tilted[1] - flat[1];
+            return tiltLift + followingOrbLift * followEase;
+          };
+          drawOrbs(flatBoard, orbAnimTime, idx, marbleOrbAlpha, { followingOnly: true, liftOffset, transitionBoards: { flat: flatBoard, tilted: tiltedBoard, invFlat: flatInv } });
+        }
+
+        // Re-draw floors above marble for occlusion
+        for (const entry of boardEntries) {
+          if (entry.level.y <= marble.y) continue;
+          if (entry.alpha <= 0.001) continue;
+          const { level, matrix, mask } = entry;
+          const levelIdx = Number.isFinite(level?.index) ? level.index : 0;
+          const rawPalette = boardColors[levelIdx] || boardColors[0] || defaultBoardColors;
+          const palette = {
+            floor: rawPalette.floor || defaultBoardColors.floor,
+            wall: rawPalette.wall || defaultBoardColors.wall
+          };
+          gl.depthMask(true);
+          drawMesh(meshes.floor, matrix, palette.floor, [0.04,0.06,0.1], entry.alpha, level.hasHole ? mask : null);
+          gl.enable(gl.CULL_FACE);
+          for(const w of meshes.walls) drawMesh(w, matrix, palette.wall, [0.04,0.05,0.09], entry.alpha);
+          if (level.wallMeshes && Array.isArray(level.wallMeshes)) {
+            for(const w of level.wallMeshes) if (w) drawMesh(w, matrix, palette.wall, [0.04,0.05,0.09], entry.alpha);
+          }
+          gl.disable(gl.CULL_FACE);
+        }
+      }
+
+      // Clear VR matrices after rendering
+      currentVRMatrices = null;
+    }
+
     // Mobile gyroscope setup
     function setupMobileGyro() {
       window.addEventListener('deviceorientation', (e) => {
@@ -3960,6 +4456,7 @@
         reloadWithConfigs(loadedLevels);
         hideLevelPicker();
         setupInput();
+        checkXRSupport(); // Enable VR button if WebXR available
         if (isMobile) {
           setupMobileStartButton();
           showMobileOverlay();
@@ -4020,6 +4517,7 @@
       reloadWithConfigs(window.marblLevels);
       hideLevelPicker();
       setupInput();
+      checkXRSupport(); // Enable VR button if WebXR available
       if (isMobile) {
         setupMobileStartButton();
         showMobileOverlay();
