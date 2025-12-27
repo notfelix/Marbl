@@ -331,7 +331,7 @@
     <h2>MARBL</h2>
     <p>Tilt your device to roll the marble.<br>Tap anywhere to rewind time.</p>
     <button id="mobile-start-btn">Start Game</button>
-    <span class="version">v0.103</span>
+    <span class="version">v0.103c</span>
   </div>
   <div id="game-container">
     <canvas id="c" width="1024" height="1024"></canvas>
@@ -956,19 +956,21 @@
     attribute vec3 aNormal;
     uniform mat4 uMVP;
     uniform mat4 uModel;
-    uniform mat4 uWorldModel;  // Original model matrix without VR transform (for shadows)
+    uniform mat4 uWorldModel;  // Original model matrix without VR transform (for shadows/lights)
     uniform mat4 uNormalMatrix;
     uniform mat4 uLightSpaceMatrix;
     uniform float uShadowOffsetY;
     varying vec3 vNormal;
     varying vec3 vWorldPos;
+    varying vec3 vWorldPosOriginal;  // World-space position for point lights (no VR transform)
     varying vec4 vLightSpacePos;
     void main(){
       vNormal = mat3(uNormalMatrix) * aNormal;
       vec4 worldPos = uModel * vec4(aPosition,1.0);
       vWorldPos = worldPos.xyz;
-      // Use world-space position (without VR transform) for shadow calculation
+      // Use world-space position (without VR transform) for shadow and point light calculations
       vec4 shadowWorldPos = uWorldModel * vec4(aPosition,1.0);
+      vWorldPosOriginal = shadowWorldPos.xyz;
       // Transform to shadow-local coords (Y=0 at active level) before light space
       vec4 shadowLocalPos = vec4(shadowWorldPos.x, shadowWorldPos.y - uShadowOffsetY, shadowWorldPos.z, 1.0);
       vLightSpacePos = uLightSpaceMatrix * shadowLocalPos;
@@ -978,6 +980,7 @@
     precision highp float;
     varying vec3 vNormal;
     varying vec3 vWorldPos;
+    varying vec3 vWorldPosOriginal;  // World-space position for point lights
     varying vec4 vLightSpacePos;
     uniform vec3 uLightDir;
     uniform vec3 uColor;
@@ -1130,10 +1133,10 @@
         holeMask = min(holeMask, mask);
       }
       color *= holeMask;
-      // Point lights from orbs
+      // Point lights from orbs (use world-space position for consistent lighting in VR)
       for (int i=0; i<MAX_POINTS; ++i) {
         if (i >= uPointCount) break;
-        vec3 L = uPointPos[i] - vWorldPos;
+        vec3 L = uPointPos[i] - vWorldPosOriginal;
         float distSq = dot(L, L);
         // Early exit: skip orbs too far to contribute meaningfully
         float atten = uPointIntensity[i] / (1.0 + distSq * 0.0008);
@@ -1149,7 +1152,7 @@
         float ambient = 0.25;  // Minimum glow regardless of angle
         float lighting = ambient + (1.0 - ambient) * diffP;
         // Calculate shadow from marble blocking this orb's light
-        float orbShadow = calcOrbShadow(uPointPos[i], vWorldPos, uMarbleCenter, uMarbleRadius);
+        float orbShadow = calcOrbShadow(uPointPos[i], vWorldPosOriginal, uMarbleCenter, uMarbleRadius);
         color += uPointColor[i] * lighting * atten * orbShadow * fadeOut;
       }
       color = clamp(color, 0.0, 2.5);
@@ -3115,36 +3118,10 @@
         : (Number.isFinite(currentSupport?.altitude) ? currentSupport.altitude : altitudeForFx);
       const proximityStrength = Number.isFinite(altitude) ? Math.max(0, Math.min(1, 1 - Math.max(0, altitude) / (marble.r * 2.5))) : 0;
 
-      if (deltaY < 0) return; // Don't show effects when below surface
-
-      // === CONTACT SHADOW ===
-      // Draw a dark blob directly under the marble for better shadow visibility in MR
-      const shadowAltitude = Math.max(0, deltaY);
-      const shadowStrength = Math.max(0, Math.min(1, 1 - shadowAltitude / (marble.r * 4)));
-      if (shadowStrength > 0.01) {
-        const shadowAlpha = 0.4 * shadowStrength;
-        const shadowScale = 1.2 + shadowAltitude * 0.02; // Shadow spreads as marble rises
-
-        let shadowM = boardM;
-        shadowM = mat4Translate(shadowM, [marble.pos.x, planeY - levelY + 0.5, marble.pos.z]);
-        shadowM = mat4Scale(shadowM, [shadowScale, 0.02, shadowScale]); // Flatten to disc
-
-        // Use multiply blend for shadow effect
-        gl.blendFunc(gl.DST_COLOR, gl.ZERO);
-        // In MR mode, prevent shadow from affecting alpha
-        if (isInVR) gl.colorMask(true, true, true, false);
-
-        // Draw shadow as dark grey (multiplied with floor color)
-        const shadowColor = 1 - shadowStrength * 0.6; // Darker when closer
-        drawMesh(meshes.marble, shadowM, [shadowColor, shadowColor, shadowColor], [0,0,0], 1.0, holeMask, false);
-
-        // Restore blend mode
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-        if (isInVR) gl.colorMask(true, true, true, true);
-      }
+      if (deltaY < 0) return; // Don't show reflection when below surface
 
       const baseAlpha = 0.22 * Math.max(0, proximityStrength * 0.58);
-      if (baseAlpha <= 0.01) return; // Skip reflections if too faint
+      if (baseAlpha <= 0.01) return; // Skip if too faint
 
       // Set up floor bounds for reflection clipping (inner area excluding walls)
       const wallMargin = plane.wallThickness + marble.r * 0.5;
@@ -3159,13 +3136,14 @@
       // In MR mode, prevent reflections from affecting alpha (would create transparency)
       if (isInVR) gl.colorMask(true, true, true, false);
 
-      // Calculate pedestal height at marble position for pedestal reflection
+      // Determine which surface the marble is on
       const pedHeight = pedestalHeightAt(marble.pos.x, marble.pos.z, supportLevel);
+      const onPedestal = pedHeight > marble.r * 0.5; // On pedestal if height is significant
 
-      // === FLOOR REFLECTION (stencil == 1) ===
-      // Always draw floor reflection - stencil clips it to floor areas
-      {
-        const floorY = levelY;
+      if (!onPedestal) {
+        // === FLOOR REFLECTION (stencil == 1) ===
+        // Simple vertical mirror on flat floor
+        const floorY = levelY; // Floor is at level base height
         const floorDistAbove = marble.y - floorY;
         const floorReflectionY = floorY - floorDistAbove + 1.2;
 
@@ -3175,11 +3153,9 @@
 
         gl.stencilFunc(gl.EQUAL, 1, 0xFF);
         drawMesh(meshes.marble, floorReflectionM, [0.65,0.7,0.8], [0.05,0.05,0.08], baseAlpha, holeMask, false);
-      }
-
-      // === PEDESTAL REFLECTION (stencil == 2) ===
-      // Always draw pedestal reflection - stencil clips it to pedestal areas
-      {
+      } else {
+        // === PEDESTAL REFLECTION (stencil == 2) ===
+        // Oriented reflection on sloped pedestal surfaces
         const pedSurfaceY = levelY + pedHeight;
         const pedNormal = pedestalNormalAt(marble.pos.x, marble.pos.z, supportLevel);
         const pedOrient = mat4FromNormal(pedNormal);
