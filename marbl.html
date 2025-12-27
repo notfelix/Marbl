@@ -2696,8 +2696,8 @@
 
       // Use VR controller input in VR, gyro on mobile, keyboard on desktop
       if (isInVR) {
-        target.x = vrInput.tiltX;
-        target.y = -vrInput.tiltY; // Invert Y so pushing forward tilts forward
+        target.x = -vrInput.tiltX; // Negate for correct left/right
+        target.y = vrInput.tiltY;  // Negate for correct forward/back
       } else if (gyroEnabled) {
         target.x = gyroTilt.x;
         target.y = gyroTilt.y;
@@ -3105,23 +3105,29 @@
       gl.enable(gl.STENCIL_TEST);
       gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
 
-      // === FLOOR REFLECTION (stencil == 1) ===
-      // Simple vertical mirror on flat floor
-      const floorY = levelY; // Floor is at level base height
-      const floorDistAbove = marble.y - floorY;
-      const floorReflectionY = floorY - floorDistAbove + 1.2;
+      // In MR mode, prevent reflections from affecting alpha (would create transparency)
+      if (isInVR) gl.colorMask(true, true, true, false);
 
-      let floorReflectionM = boardM;
-      floorReflectionM = mat4Translate(floorReflectionM, [marble.pos.x, floorReflectionY - levelY, marble.pos.z]);
-      floorReflectionM = mat4Scale(floorReflectionM, [1, -1, 1]);
-
-      gl.stencilFunc(gl.EQUAL, 1, 0xFF);
-      drawMesh(meshes.marble, floorReflectionM, [0.65,0.7,0.8], [0.05,0.05,0.08], baseAlpha, holeMask, false);
-
-      // === PEDESTAL REFLECTION (stencil == 2) ===
-      // Oriented reflection on sloped pedestal surfaces
+      // Determine which surface the marble is on
       const pedHeight = pedestalHeightAt(marble.pos.x, marble.pos.z, supportLevel);
-      if (pedHeight > 0) {
+      const onPedestal = pedHeight > marble.r * 0.5; // On pedestal if height is significant
+
+      if (!onPedestal) {
+        // === FLOOR REFLECTION (stencil == 1) ===
+        // Simple vertical mirror on flat floor
+        const floorY = levelY; // Floor is at level base height
+        const floorDistAbove = marble.y - floorY;
+        const floorReflectionY = floorY - floorDistAbove + 1.2;
+
+        let floorReflectionM = boardM;
+        floorReflectionM = mat4Translate(floorReflectionM, [marble.pos.x, floorReflectionY - levelY, marble.pos.z]);
+        floorReflectionM = mat4Scale(floorReflectionM, [1, -1, 1]);
+
+        gl.stencilFunc(gl.EQUAL, 1, 0xFF);
+        drawMesh(meshes.marble, floorReflectionM, [0.65,0.7,0.8], [0.05,0.05,0.08], baseAlpha, holeMask, false);
+      } else {
+        // === PEDESTAL REFLECTION (stencil == 2) ===
+        // Oriented reflection on sloped pedestal surfaces
         const pedSurfaceY = levelY + pedHeight;
         const pedNormal = pedestalNormalAt(marble.pos.x, marble.pos.z, supportLevel);
         const pedOrient = mat4FromNormal(pedNormal);
@@ -3137,6 +3143,8 @@
         drawMesh(meshes.marble, pedReflectionM, [0.65,0.7,0.8], [0.05,0.05,0.08], baseAlpha, holeMask, false);
       }
 
+      // Restore alpha writes
+      if (isInVR) gl.colorMask(true, true, true, true);
       gl.disable(gl.STENCIL_TEST);
       // Reset reflection clipping for normal rendering
       gl.uniform1f(uniforms.reflectionClip, 0.0);
@@ -3157,6 +3165,9 @@
       gl.disable(gl.DEPTH_TEST);
       gl.depthMask(false);
 
+      // In MR mode, prevent reflections from affecting alpha (would create transparency)
+      if (isInVR) gl.colorMask(true, true, true, false);
+
       // Reflect walls: flip Y to mirror below floor plane
       let wallReflectM = boardM;
       wallReflectM = mat4Scale(wallReflectM, [1, -1, 1]);
@@ -3172,6 +3183,8 @@
         }
       }
 
+      // Restore alpha writes
+      if (isInVR) gl.colorMask(true, true, true, true);
       gl.enable(gl.DEPTH_TEST);
       gl.depthMask(true);
     }
@@ -3776,27 +3789,30 @@
         if (!source.gamepad) continue;
         const gp = source.gamepad;
 
-        if (source.handedness === 'left') {
-          // Thumbstick for tilt - Quest uses axes 2,3, fallback to 0,1
-          if (gp.axes.length >= 4) {
-            vrInput.tiltX = gp.axes[2] || 0;
-            vrInput.tiltY = gp.axes[3] || 0;
-          } else if (gp.axes.length >= 2) {
-            vrInput.tiltX = gp.axes[0] || 0;
-            vrInput.tiltY = gp.axes[1] || 0;
-          }
+        // Both thumbsticks control tilt (use whichever has input)
+        let stickX = 0, stickY = 0;
+        if (gp.axes.length >= 4) {
+          stickX = gp.axes[2] || 0;
+          stickY = gp.axes[3] || 0;
+        } else if (gp.axes.length >= 2) {
+          stickX = gp.axes[0] || 0;
+          stickY = gp.axes[1] || 0;
         }
+
+        // Apply dead zone per-stick before combining
+        const deadzone = 0.15;
+        if (Math.abs(stickX) < deadzone) stickX = 0;
+        if (Math.abs(stickY) < deadzone) stickY = 0;
+
+        // Use whichever stick has larger input
+        if (Math.abs(stickX) > Math.abs(vrInput.tiltX)) vrInput.tiltX = stickX;
+        if (Math.abs(stickY) > Math.abs(vrInput.tiltY)) vrInput.tiltY = stickY;
 
         // Either trigger for rewind
         if (gp.buttons.length > 0 && gp.buttons[0].pressed) {
           vrInput.rewindPressed = true;
         }
       }
-
-      // Apply dead zone
-      const deadzone = 0.15;
-      if (Math.abs(vrInput.tiltX) < deadzone) vrInput.tiltX = 0;
-      if (Math.abs(vrInput.tiltY) < deadzone) vrInput.tiltY = 0;
     }
 
     function xrFrameLoop(time, xrFrame) {
