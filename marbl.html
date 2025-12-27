@@ -331,13 +331,13 @@
     <h2>MARBL</h2>
     <p>Tilt your device to roll the marble.<br>Tap anywhere to rewind time.</p>
     <button id="mobile-start-btn">Start Game</button>
-    <span class="version">v0.103e</span>
+    <span class="version">v0.103f</span>
   </div>
   <div id="game-container">
     <canvas id="c" width="1024" height="1024"></canvas>
     <div id="rewind-bar-container"></div>
   </div>
-  <button id="vr-button">Enter MR<span class="version">v0.103d</span></button>
+  <button id="vr-button">Enter MR<span class="version">v0.103f</span></button>
   <div id="level-picker">
     <h1>MARBL</h1>
     <p>No levels found. Load a level file to start playing, or place <code>marbl-levels.js</code> in the same directory.</p>
@@ -389,7 +389,7 @@
     // XR-capable devices (like Quest) should use desktop-class rendering quality
     const isXRCapable = !!navigator.xr;
     const isDesktopClass = !isMobile || isXRCapable;
-    let pixelatedMode = isMobile && !isXRCapable;
+    let pixelatedMode = false; // Disabled for testing shadows
 
     // ========================================
     // WEBXR STATE
@@ -3136,7 +3136,10 @@
       if (baseAlpha <= 0.01) return; // Skip if too faint
 
       // Set up floor bounds for reflection clipping (inner area excluding walls)
-      const wallMargin = plane.wallThickness + marble.r * 0.5;
+      // Use larger margin in VR to account for angled viewing where floor-under-walls may be visible
+      const wallMargin = isInVR
+        ? plane.wallThickness + marble.r * 1.5  // More aggressive clipping in MR
+        : plane.wallThickness + marble.r * 0.5;
       const halfW = plane.w / 2 - wallMargin;
       const halfH = plane.h / 2 - wallMargin;
       gl.uniform4f(uniforms.floorBounds, -halfW, -halfH, halfW, halfH);
