@@ -331,13 +331,13 @@
     <h2>MARBL</h2>
     <p>Tilt your device to roll the marble.<br>Tap anywhere to rewind time.</p>
     <button id="mobile-start-btn">Start Game</button>
-    <span class="version">v0.103f</span>
+    <span class="version">v0.103g</span>
   </div>
   <div id="game-container">
     <canvas id="c" width="1024" height="1024"></canvas>
     <div id="rewind-bar-container"></div>
   </div>
-  <button id="vr-button">Enter MR<span class="version">v0.103f</span></button>
+  <button id="vr-button">Enter MR<span class="version">v0.103g</span></button>
   <div id="level-picker">
     <h1>MARBL</h1>
     <p>No levels found. Load a level file to start playing, or place <code>marbl-levels.js</code> in the same directory.</p>
@@ -4083,11 +4083,8 @@
         drawMarbleEffects(boardTiltM);
         gl.depthMask(true);
         gl.enable(gl.DEPTH_TEST);
-        // Use scissor to only clear depth for this eye
-        gl.enable(gl.SCISSOR_TEST);
-        gl.scissor(viewport.x, viewport.y, viewport.width, viewport.height);
-        gl.clear(gl.DEPTH_BUFFER_BIT);
-        gl.disable(gl.SCISSOR_TEST);
+        // In MR mode, keep wall depth for proper occlusion from side views
+        // In non-MR, clear depth so marble/orbs render on top (top-down view)
 
         let marbleM = mat4Translate(marbleTiltM, [marble.pos.x, marble.y - activeLevelY, marble.pos.z]);
         drawMesh(meshes.marble, marbleM, [0.7,0.7,0.7], [0.1,0.1,0.1], marbleOrbAlpha, null, false);
