@@ -391,7 +391,7 @@
      * COORDINATES: Y is up, levels stack downward (negative Y), camera looks from above
      */
 
-    const GAME_VERSION = 'v0.112';
+    const GAME_VERSION = 'v0.112b';
 
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     // XR-capable devices (like Quest) should use desktop-class rendering quality
@@ -2220,8 +2220,9 @@
         const strength = baseStrength * orbGlowPulse(orb, time) * (1 + flashBoost * 1.0) * weight * collectionFactor;
         const levelY = levels[renderLevelIndex]?.y || 0;
         const satOffset = (orb.sats && orb.sats.length) ? satelliteOffset(orb.sats[0], time, 0) : null;
+        const satMinY = orbConfig.r * 0.8; // Match rendering floor clamp
         const rawX = satOffset ? orb.pos.x + satOffset.x : orb.pos.x;
-        const rawY = satOffset ? orb.pos.y + satOffset.y : orb.pos.y;
+        const rawY = satOffset ? Math.max(satMinY, orb.pos.y + satOffset.y) : orb.pos.y;
         const rawZ = satOffset ? orb.pos.z + satOffset.z : orb.pos.z;
         // Transform orb position by board tilt to match floor coordinate space
         const boardM = boardTransform(levelY);
@@ -3097,11 +3098,14 @@
 
         // Orbiting sun(s) (additive-ish)
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+        // Minimum Y to prevent satellites clipping through floor (satellite radius ~9 at 0.35 scale)
+        const satMinY = orbConfig.r * 0.8;
         for (let i=0;i<orb.sats.length;i++){
           const sat = orb.sats[i];
           const offset = satelliteOffset(sat, orbTime, i);
           const extraY = liftOffset ? liftOffset(orb, renderLevelIndex, followEase) : 0;
-          const basePos = [orb.pos.x + offset.x, orb.pos.y + offset.y, orb.pos.z + offset.z, 1];
+          const satY = Math.max(satMinY, orb.pos.y + offset.y);
+          const basePos = [orb.pos.x + offset.x, satY, orb.pos.z + offset.z, 1];
           let sM;
           if (isFollowing && hasTransitionBoards && followEase < 1) {
             const tiltedPos = mat4TransformVec4(transitionBoards.tilted, basePos);
