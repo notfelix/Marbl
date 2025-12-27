@@ -310,6 +310,18 @@
       background: linear-gradient(135deg, rgba(110, 168, 254, 0.5) 0%, rgba(167, 139, 250, 0.5) 100%);
       transform: scale(0.98);
     }
+    .version {
+      font-size: 0.7rem;
+      color: rgba(229, 236, 255, 0.4);
+      letter-spacing: 0.1em;
+      margin-top: 1.5rem;
+    }
+    #vr-button .version {
+      display: block;
+      font-size: 0.6rem;
+      margin-top: 0.25rem;
+      opacity: 0.6;
+    }
   </style>
 </head>
 <body>
@@ -319,12 +331,13 @@
     <h2>MARBL</h2>
     <p>Tilt your device to roll the marble.<br>Tap anywhere to rewind time.</p>
     <button id="mobile-start-btn">Start Game</button>
+    <span class="version">v0.101</span>
   </div>
   <div id="game-container">
     <canvas id="c" width="1024" height="1024"></canvas>
     <div id="rewind-bar-container"></div>
   </div>
-  <button id="vr-button">Enter MR</button>
+  <button id="vr-button">Enter MR<span class="version">v0.101</span></button>
   <div id="level-picker">
     <h1>MARBL</h1>
     <p>No levels found. Load a level file to start playing, or place <code>marbl-levels.js</code> in the same directory.</p>
