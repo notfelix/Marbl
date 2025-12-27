@@ -2582,14 +2582,13 @@
       // Up vector tilted to match desired shadow orientation
       const lightView = mat4LookAt(lightPos, lightTarget, { x: -0.5, y: 0, z: 1 });
 
-      // orthoSize can be smaller now since we use shadow-local coords (Y near 0)
       const orthoSize = 1200;
       const lightProj = mat4Ortho(-orthoSize, orthoSize, -orthoSize, orthoSize, 1, lightDistance * 3);
 
       return mat4Multiply(lightProj, lightView);
     }
 
-    function renderShadowPass(marbleModel, levelY) {
+    function renderShadowPass(marbleModel) {
       // Bind shadow framebuffer
       gl.bindFramebuffer(gl.FRAMEBUFFER, shadowFramebuffer);
       gl.viewport(0, 0, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
@@ -2908,7 +2907,7 @@
 
     let shadowEnabled = false;
     let shadowReceiveEnabled = true;
-    let shadowOffsetY = 0; // Y offset for shadow coordinate system (set per frame)
+    let shadowOffsetY = 0; // World Y of active level floor (for shadow-local coords)
 
     function drawMesh(mesh, model, color, ambient=[0.05,0.08,0.12], alpha=1.0, holeMask=null, receiveShadow=true) {
       gl.bindVertexArray(mesh.vao);
@@ -3213,17 +3212,14 @@
       // ========================================
       // SHADOW PASS - Render marble to shadow map
       // ========================================
+      // Uses shadow-local coordinates where Y=0 is at activeLevelY.
+      // Both the marble (rendered here) and board fragments (in shader) use this system.
+      shadowOffsetY = activeLevelY;
       {
-        // Set shadow offset for this frame - transforms world Y to shadow-local Y
-        // Shadow-local coords: Y=0 is at activeLevelY, marble is at Y≈25 (its height above floor)
-        shadowOffsetY = activeLevelY;
-
-        // Marble model in shadow-local coords (Y=0 at active level floor)
-        // Don't use boardTransform's Y offset - render marble at local Y = marble.y - activeLevelY
-        const marbleTiltMForShadow = boardTransform(0, marbleTiltScale);  // No Y offset, just tilt
-        let marbleModelForShadow = marbleTiltMForShadow;
-        marbleModelForShadow = mat4Translate(marbleModelForShadow, [marble.pos.x, marble.y - activeLevelY, marble.pos.z]);
-        renderShadowPass(marbleModelForShadow, activeLevelY);
+        const marbleTiltM = boardTransform(0, marbleTiltScale);
+        const marbleLocalY = marble.y - activeLevelY;
+        const marbleModel = mat4Translate(marbleTiltM, [marble.pos.x, marbleLocalY, marble.pos.z]);
+        renderShadowPass(marbleModel);
         shadowEnabled = true;
       }
       const fadeDepth = levelDrop * 0.75; // fade out as we fall roughly three quarters of a level
