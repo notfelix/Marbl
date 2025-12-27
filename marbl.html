@@ -391,7 +391,7 @@
      * COORDINATES: Y is up, levels stack downward (negative Y), camera looks from above
      */
 
-    const GAME_VERSION = 'v0.106c';
+    const GAME_VERSION = 'v0.106d';
 
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     // XR-capable devices (like Quest) should use desktop-class rendering quality
@@ -2840,11 +2840,13 @@
       gl.uniformMatrix4fv(uniforms.model, false, marbleModel);
       gl.uniformMatrix4fv(uniforms.worldModel, false, marbleModel);
       gl.uniformMatrix4fv(uniforms.normalMatrix, false, mat4Identity());
+      gl.uniform3fv(uniforms.lightDir, new Float32Array([lightDir.x, lightDir.y, lightDir.z]));
       gl.uniform3f(uniforms.color, 1.0, 1.0, 1.0);
       gl.uniform3f(uniforms.ambient, 0.8, 0.8, 0.85);
       gl.uniform1f(uniforms.alpha, 1.0);
       gl.uniform1f(uniforms.shadowEnabled, 0.0);
-      // Note: Do NOT set pointCount/holeCount to 0 here - it breaks orb lighting for subsequent draws
+      gl.uniform1f(uniforms.reflectionClip, 0.0);  // Don't clip - we want to capture the marble
+      gl.uniform1i(uniforms.holeCount, 0);  // No hole masking for reflection capture (drawMesh resets per-draw)
 
       gl.bindVertexArray(meshes.marble.vao);
       gl.drawElements(gl.TRIANGLES, meshes.marble.count, gl.UNSIGNED_SHORT, 0);
