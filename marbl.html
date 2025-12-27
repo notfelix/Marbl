@@ -391,7 +391,7 @@
      * COORDINATES: Y is up, levels stack downward (negative Y), camera looks from above
      */
 
-    const GAME_VERSION = 'v0.114d';
+    const GAME_VERSION = 'v0.114e';
 
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     // XR-capable devices (like Quest) should use desktop-class rendering quality
@@ -3937,12 +3937,14 @@
         let marbleM = mat4Translate(marbleTiltM, [marble.pos.x, marble.y - activeLevelY, marble.pos.z]);
         drawMesh(meshes.marble, marbleM, [0.7,0.7,0.7], [0.1,0.1,0.1], marbleOrbAlpha, null, false);
 
-        // Pass 2: Draw levels above marble WITHOUT depth writes (visible but don't occlude)
+        // Pass 2: Draw levels above marble with depth DISABLED (visible through, don't occlude marble)
+        gl.disable(gl.DEPTH_TEST);
         for (const entry of boardEntries) {
           if (entry.level.index < activeLevelIndex) {
             drawFloorAndPedestals(entry, false);
           }
         }
+        gl.enable(gl.DEPTH_TEST);
 
         // Pass 3: Draw walls AFTER marble so they occlude it from side views
         gl.enable(gl.CULL_FACE);
