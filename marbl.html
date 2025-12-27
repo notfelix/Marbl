@@ -353,6 +353,7 @@
      */
 
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    let pixelatedMode = false;
     const starCanvas = document.getElementById('stars');
     const canvas = document.getElementById('c');
     const starCtx = starCanvas.getContext('2d');
@@ -572,7 +573,10 @@
 
     // HiDPI handling
     function resize() {
-      const dpr = window.devicePixelRatio || 1;
+      const baseDpr = window.devicePixelRatio || 1;
+      // Pixelated mode uses very low resolution for retro look
+      const dpr = pixelatedMode ? 0.25 : baseDpr;
+      canvas.style.imageRendering = pixelatedMode ? 'pixelated' : 'auto';
       let displayW, displayH;
       if (isMobile) {
         // Square canvas filling the smaller screen dimension
@@ -3526,6 +3530,11 @@
         }
         if (!e.repeat && e.code === 'Escape') {
           togglePause();
+          return;
+        }
+        if (!e.repeat && e.code === 'KeyR') {
+          pixelatedMode = !pixelatedMode;
+          resize();
           return;
         }
         keys.add(e.code);
