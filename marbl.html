@@ -391,7 +391,7 @@
      * COORDINATES: Y is up, levels stack downward (negative Y), camera looks from above
      */
 
-    const GAME_VERSION = 'v0.107c';
+    const GAME_VERSION = 'v0.107d';
 
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     // XR-capable devices (like Quest) should use desktop-class rendering quality
@@ -3558,8 +3558,11 @@
         gl.stencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
         gl.stencilMask(0xFF);
 
-        gl.depthMask(allowDepthWrite);
+        // Floor doesn't write depth - this allows marble reflection to pass depth test
+        // against floor pixels while still being occluded by walls
+        gl.depthMask(false);
         drawMesh(meshes.floor, matrix, palette.floor, [0.04,0.06,0.1], entry.alpha, level.hasHole ? mask : null, useShadows);
+        gl.depthMask(allowDepthWrite);
 
         // Draw wall reflections on the floor (while stencil = 1)
         gl.stencilFunc(gl.EQUAL, 1, 0xFF);
@@ -3626,12 +3629,12 @@
       const marbleTiltM = marbleTiltScale >= 0.999 ? boardTiltM : boardTransform(activeLevelY, marbleTiltScale);
       // Fade marble/orbs as level above fades in
       const marbleOrbAlpha = 1 - maxAlphaAbove;
-      // Draw marble reflection - uses stencil for floor masking, depth disabled
+      // Draw marble reflection - uses stencil for floor masking
+      // Depth test ENABLED so walls can occlude reflection when viewed from side
+      // Floor didn't write depth, so reflection passes there; walls did write depth, so they occlude
       gl.depthMask(false);
-      gl.disable(gl.DEPTH_TEST);
       drawMarbleEffects(boardTiltM);
       gl.depthMask(true);
-      gl.enable(gl.DEPTH_TEST);
       gl.clear(gl.DEPTH_BUFFER_BIT); // Clear depth so marble/orbs render on top, alpha handles fade
       let marbleM = marbleTiltM;
       marbleM = mat4Translate(marbleM, [marble.pos.x, marble.y - activeLevelY, marble.pos.z]);
@@ -4105,8 +4108,11 @@
           gl.stencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
           gl.stencilMask(0xFF);
 
-          gl.depthMask(allowDepthWrite);
+          // Floor doesn't write depth - allows marble reflection to pass depth test
+          // against floor pixels while still being occluded by walls
+          gl.depthMask(false);
           drawMesh(meshes.floor, matrix, palette.floor, [0.04,0.06,0.1], entry.alpha, level.hasHole ? mask : null, useShadows);
+          gl.depthMask(allowDepthWrite);
 
           gl.stencilFunc(gl.EQUAL, 1, 0xFF);
           gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
@@ -4164,12 +4170,12 @@
         const marbleTiltM = marbleTiltScale >= 0.999 ? boardTiltM : boardTransform(activeLevelY, marbleTiltScale);
         const marbleOrbAlpha = 1 - maxAlphaAbove;
 
-        // Draw marble reflection - uses stencil for floor masking, depth disabled
+        // Draw marble reflection - uses stencil for floor masking
+        // Depth test ENABLED so walls can occlude reflection when viewed from side
+        // Floor didn't write depth, so reflection passes there; walls did write depth, so they occlude
         gl.depthMask(false);
-        gl.disable(gl.DEPTH_TEST);
         drawMarbleEffects(boardTiltM);
         gl.depthMask(true);
-        gl.enable(gl.DEPTH_TEST);
 
         let marbleM = mat4Translate(marbleTiltM, [marble.pos.x, marble.y - activeLevelY, marble.pos.z]);
         drawMesh(meshes.marble, marbleM, [0.7,0.7,0.7], [0.1,0.1,0.1], marbleOrbAlpha, null, false);
