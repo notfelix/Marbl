@@ -226,6 +226,13 @@
         bottom: 0 !important;
         height: 100% !important;
       }
+      /* Hide rewind bar on mobile until game is started */
+      #rewind-bar-container {
+        display: none !important;
+      }
+      body.mobile-game-started #rewind-bar-container {
+        display: block !important;
+      }
       #game-container {
         width: 100vw;
         max-width: 100dvh;
@@ -1384,6 +1391,7 @@
     const keys = new Set();
     // Mobile/gyro state
     let gyroEnabled = false;
+    let mobileGameStarted = false;
     const gyroTilt = { x: 0, y: 0 };
     const gyroSensitivity = 35; // degrees to reach full tilt
     const gyroDeadzone = 2; // degrees
@@ -3421,13 +3429,13 @@
         document.addEventListener('touchstart', (e) => {
           // Allow buttons and interactive elements to work normally
           if (e.target.closest('button, a, input, #mobile-overlay, #level-picker')) return;
-          if (paused) return;
+          if (!mobileGameStarted || paused) return;
           e.preventDefault();
           keys.add('Space');
         }, { passive: false });
         document.addEventListener('touchend', (e) => {
           if (e.target.closest('button, a, input, #mobile-overlay, #level-picker')) return;
-          if (paused) return;
+          if (!mobileGameStarted || paused) return;
           e.preventDefault();
           keys.delete('Space');
         }, { passive: false });
@@ -3491,6 +3499,9 @@
 
       btn.addEventListener('click', async () => {
         const granted = await requestGyroPermission();
+        // Mark game as started and show rewind bar
+        mobileGameStarted = true;
+        document.body.classList.add('mobile-game-started');
         if (granted) {
           gyroEnabled = true;
           setupMobileGyro();
