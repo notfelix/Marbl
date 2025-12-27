@@ -391,7 +391,7 @@
      * COORDINATES: Y is up, levels stack downward (negative Y), camera looks from above
      */
 
-    const GAME_VERSION = 'v0.106b';
+    const GAME_VERSION = 'v0.106c';
 
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     // XR-capable devices (like Quest) should use desktop-class rendering quality
@@ -1186,43 +1186,30 @@
       // Planar reflection for floor/pedestal surfaces
       if (uReflectionEnabled > 0.5) {
         vec3 n = normalize(vNormal);
-        // Only show reflection on upward-facing surfaces (dot with up > threshold)
         float upFacing = dot(n, vec3(0.0, 1.0, 0.0));
-        if (upFacing > 0.3) {
-          // Calculate reflection UV based on surface position relative to marble
-          // Project marble position onto surface plane, then calculate UV
-          vec3 toMarble = uReflectionMarblePos - vWorldPosOriginal;
 
-          // Reflect the view through the surface
-          // For a surface at height h with normal n, reflection appears at h - (marble.y - h)
-          float surfaceY = vWorldPosOriginal.y;
-          float marbleHeightAbove = uReflectionMarblePos.y - surfaceY;
+        // Calculate UV based on world XZ position relative to marble
+        vec3 toMarble = uReflectionMarblePos - vWorldPosOriginal;
+        float texScale = 1.0 / (uMarbleRadius * 3.0);
+        vec2 reflectUV = vec2(
+          0.5 + toMarble.x * texScale,
+          0.5 + toMarble.z * texScale
+        );
 
-          // Skip if marble is below surface or too far above
-          if (marbleHeightAbove > 0.0 && marbleHeightAbove < uMarbleRadius * 4.0) {
-            // Calculate where reflection appears on this surface
-            // For tilted surfaces, offset based on normal
-            vec3 reflectOffset = toMarble - 2.0 * dot(toMarble, n) * n;
+        // Sample if in valid UV range and surface faces up
+        float dist = length(toMarble.xz);
+        float distFade = 1.0 - smoothstep(0.0, uMarbleRadius * 3.0, dist);
 
-            // UV coordinates: center of texture is marble position, extends by marble radius
-            float texScale = 1.0 / (uMarbleRadius * 3.0);
-            vec2 reflectUV = vec2(
-              0.5 - reflectOffset.x * texScale,
-              0.5 - reflectOffset.z * texScale
-            );
+        if (upFacing > 0.3 && reflectUV.x > 0.0 && reflectUV.x < 1.0 && reflectUV.y > 0.0 && reflectUV.y < 1.0) {
+          vec4 reflectColor = texture2D(uReflectionTex, reflectUV);
 
-            // Only sample if UV is in valid range
-            if (reflectUV.x > 0.0 && reflectUV.x < 1.0 && reflectUV.y > 0.0 && reflectUV.y < 1.0) {
-              vec4 reflectColor = texture2D(uReflectionTex, reflectUV);
-
-              // Fade reflection based on: distance from marble, surface angle, height
-              float distFade = 1.0 - smoothstep(0.0, uMarbleRadius * 2.5, length(toMarble.xz));
-              float angleFade = smoothstep(0.3, 0.8, upFacing);
-              float heightFade = 1.0 - smoothstep(0.0, uMarbleRadius * 2.0, marbleHeightAbove);
-
-              float reflectStrength = uReflectionAlpha * distFade * angleFade * heightFade * reflectColor.a;
-              color = mix(color, reflectColor.rgb * 1.2, reflectStrength);
-            }
+          // If texture has content, blend it; otherwise show debug tint
+          if (reflectColor.a > 0.01) {
+            float reflectStrength = uReflectionAlpha * distFade * reflectColor.a;
+            color = mix(color, reflectColor.rgb, reflectStrength);
+          } else {
+            // Debug: show blue tint where reflection SHOULD appear (texture empty)
+            color = mix(color, vec3(0.3, 0.3, 0.8), 0.3 * distFade);
           }
         }
       }
@@ -2853,8 +2840,8 @@
       gl.uniformMatrix4fv(uniforms.model, false, marbleModel);
       gl.uniformMatrix4fv(uniforms.worldModel, false, marbleModel);
       gl.uniformMatrix4fv(uniforms.normalMatrix, false, mat4Identity());
-      gl.uniform3f(uniforms.color, 0.75, 0.75, 0.8);
-      gl.uniform3f(uniforms.ambient, 0.4, 0.4, 0.45);
+      gl.uniform3f(uniforms.color, 1.0, 1.0, 1.0);
+      gl.uniform3f(uniforms.ambient, 0.8, 0.8, 0.85);
       gl.uniform1f(uniforms.alpha, 1.0);
       gl.uniform1f(uniforms.shadowEnabled, 0.0);
       // Note: Do NOT set pointCount/holeCount to 0 here - it breaks orb lighting for subsequent draws
@@ -3699,7 +3686,7 @@
         if (isInVR && isActiveLevel) {
           gl.uniform1f(uniforms.reflectionEnabled, 1.0);
           gl.uniform3f(uniforms.reflectionMarblePos, marble.pos.x, marble.y, marble.pos.z);
-          gl.uniform1f(uniforms.reflectionAlpha, 0.25);
+          gl.uniform1f(uniforms.reflectionAlpha, 0.5);
         }
         drawMesh(meshes.floor, matrix, palette.floor, [0.04,0.06,0.1], entry.alpha, level.hasHole ? mask : null, useShadows);
         if (isInVR) gl.uniform1f(uniforms.reflectionEnabled, 0.0); // Disable for walls
@@ -3730,7 +3717,7 @@
         if (isInVR && isActiveLevel) {
           gl.uniform1f(uniforms.reflectionEnabled, 1.0);
           gl.uniform3f(uniforms.reflectionMarblePos, marble.pos.x, marble.y, marble.pos.z);
-          gl.uniform1f(uniforms.reflectionAlpha, 0.25);
+          gl.uniform1f(uniforms.reflectionAlpha, 0.5);
         }
 
         const pedestals = pedestalsForLevel(level);
@@ -4266,7 +4253,7 @@
           if (isActiveLevel) {
             gl.uniform1f(uniforms.reflectionEnabled, 1.0);
             gl.uniform3f(uniforms.reflectionMarblePos, marble.pos.x, marble.y, marble.pos.z);
-            gl.uniform1f(uniforms.reflectionAlpha, 0.25);
+            gl.uniform1f(uniforms.reflectionAlpha, 0.5);
           }
           drawMesh(meshes.floor, matrix, palette.floor, [0.04,0.06,0.1], entry.alpha, level.hasHole ? mask : null, useShadows);
           gl.uniform1f(uniforms.reflectionEnabled, 0.0); // Disable for walls
@@ -4295,7 +4282,7 @@
           if (isActiveLevel) {
             gl.uniform1f(uniforms.reflectionEnabled, 1.0);
             gl.uniform3f(uniforms.reflectionMarblePos, marble.pos.x, marble.y, marble.pos.z);
-            gl.uniform1f(uniforms.reflectionAlpha, 0.25);
+            gl.uniform1f(uniforms.reflectionAlpha, 0.5);
           }
 
           const pedestals = pedestalsForLevel(level);
