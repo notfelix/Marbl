@@ -391,7 +391,7 @@
      * COORDINATES: Y is up, levels stack downward (negative Y), camera looks from above
      */
 
-    const GAME_VERSION = 'v0.110f';
+    const GAME_VERSION = 'v0.112';
 
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     // XR-capable devices (like Quest) should use desktop-class rendering quality
@@ -1790,7 +1790,7 @@
       const ground = levelHeightAt(level, orb.pos.x, orb.pos.z);
       if (!Number.isFinite(ground)) return; // let orbs fall through holes
       const levelY = level.y || 0;
-      const clearance = (orbConfig.r || 12) * 0.6;
+      const clearance = (orbConfig.r || 12) * 1.1; // Full radius + small margin to prevent floor poke-through
       const floorLocal = (ground - levelY) + clearance;
       const distAbove = orb.pos.y - floorLocal;
       const approachZone = clearance * 3;
@@ -2277,7 +2277,7 @@
         };
       }
       function createOrb(p, isWild, savedOrb=null) {
-        const yLocal = (levelHeightAt(level, p.x, p.z) - level.y) + orbConfig.r;
+        const yLocal = (levelHeightAt(level, p.x, p.z) - level.y) + orbConfig.r * 1.1;
         // Reuse saved orb properties if available, otherwise generate new random ones
         let seed, sats, orbitPhase, orbitRadius, orbitHeight, orbitSpeed;
         if (savedOrb) {
