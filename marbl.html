@@ -391,7 +391,7 @@
      * COORDINATES: Y is up, levels stack downward (negative Y), camera looks from above
      */
 
-    const GAME_VERSION = 'v0.106i';
+    const GAME_VERSION = 'v0.106j';
 
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     // XR-capable devices (like Quest) should use desktop-class rendering quality
@@ -3238,92 +3238,38 @@
       const baseAlpha = 0.22 * Math.max(0, proximityStrength * 0.58);
       if (baseAlpha <= 0.01) return; // Skip if too faint
 
-      // Set up floor bounds for reflection clipping
-      const wallMargin = isInVR
-        ? plane.wallThickness + marble.r * 1.5
-        : plane.wallThickness + marble.r * 0.5;
-      const halfW = plane.w / 2 - wallMargin;
-      const halfH = plane.h / 2 - wallMargin;
-      gl.uniform4f(uniforms.floorBounds, -halfW, -halfH, halfW, halfH);
-      gl.uniform1f(uniforms.reflectionClip, 1.0);
-
-      // === Create stencil mask with proper depth-based occlusion ===
-      // Use a separate depth buffer pass so walls occlude floor from camera's view
-      gl.clear(gl.STENCIL_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-      gl.enable(gl.STENCIL_TEST);
-      gl.enable(gl.DEPTH_TEST);
-      gl.depthFunc(gl.LESS);
-      gl.stencilMask(0xFF);
-      gl.colorMask(false, false, false, false); // Stencil-only pass
-      gl.depthMask(true);  // ENABLE depth writes so walls can occlude
-
-      gl.uniform1f(uniforms.reflectionClip, 0.0);
-
-      // Floor writes stencil=1 AND depth
-      gl.stencilFunc(gl.ALWAYS, 1, 0xFF);
-      gl.stencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
-      drawMesh(meshes.floor, boardM, [0,0,0], [0,0,0], 1.0, holeMask, false);
-
-      // Walls write stencil=0 where they pass depth test (in front of floor)
-      gl.stencilFunc(gl.ALWAYS, 0, 0xFF);
-      gl.stencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
-      for (const w of meshes.walls) {
-        drawMesh(w, boardM, [0,0,0], [0,0,0], 1.0, null, false);
-      }
-      if (supportLevel.wallMeshes && Array.isArray(supportLevel.wallMeshes)) {
-        for (const w of supportLevel.wallMeshes) {
-          if (w) drawMesh(w, boardM, [0,0,0], [0,0,0], 1.0, null, false);
-        }
-      }
-
-      // Pedestals write stencil=0 where visible
-      const pedestals = pedestalsForLevel(supportLevel);
-      for (const { pos, idx } of pedestals) {
-        const height = pedestalHeightForIndex(idx, supportLevel);
-        const pedCollapse = collapseProgressFor(supportLevel.index, idx);
-        if (pedCollapse >= 1) continue;
-        const pedMesh = pedCollapse > 0 ? meshes.pedestalHole : meshes.pedestal;
-        let pedM = mat4Translate(boardM, [pos.x, 0, pos.z]);
-        pedM = mat4Scale(pedM, [1, height / pedestal.height, 1]);
-        drawMesh(pedMesh, pedM, [0,0,0], [0,0,0], 1.0, null, false);
-      }
-
-      gl.colorMask(true, true, true, true);
-      gl.stencilMask(0x00);
-      gl.depthMask(true);
-      gl.clear(gl.DEPTH_BUFFER_BIT);  // Clear depth so reflection/scene can render normally
-
-      gl.uniform1f(uniforms.reflectionClip, 1.0);
+      // Simple approach: draw reflection directly below marble on the floor surface
+      // No stencil needed - the reflection is positioned to avoid wall occlusion issues
 
       // In MR mode, prevent reflections from affecting alpha
       if (isInVR) gl.colorMask(true, true, true, false);
 
-      // === Calculate reflection with slope awareness ===
-      const surfaceNormal = levelNormalAt(supportLevel, marble.pos.x, marble.pos.z);
-      const nx = surfaceNormal.x, ny = surfaceNormal.y, nz = surfaceNormal.z;
+      gl.enable(gl.DEPTH_TEST);
+      gl.depthFunc(gl.LEQUAL);  // LEQUAL so reflection draws on floor surface
+      gl.depthMask(false);  // Don't write depth
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-      // Reflect marble position across the surface plane with normal N
-      // P' = P - 2 * dot(P - S, N) * N
-      const heightAbovePlane = marble.y - planeY;
-      const dotPN = heightAbovePlane * ny; // simplified since we measure from directly below
-      const reflectedY = marble.y - 2 * dotPN;
+      // Position reflection just above the floor surface (to avoid z-fighting)
+      // Use the actual surface height, not the reflected position
+      const surfaceNormal = levelNormalAt(supportLevel, marble.pos.x, marble.pos.z);
 
       let reflectionM = boardM;
-      reflectionM = mat4Translate(reflectionM, [marble.pos.x, reflectedY - levelY + 1.0, marble.pos.z]);
+      // Place at marble XZ position, on the floor surface (planeY relative to level)
+      const floorOffset = planeY - levelY + 0.5;  // Slightly above floor to avoid z-fighting
+      reflectionM = mat4Translate(reflectionM, [marble.pos.x, floorOffset, marble.pos.z]);
 
-      // Simple Y-flip for reflection (works for mostly-horizontal surfaces)
-      reflectionM = mat4Scale(reflectionM, [1, -1, 1]);
+      // Flatten and flip the marble to create a "squashed" reflection
+      const squash = 0.15;  // How flat the reflection is
+      reflectionM = mat4Scale(reflectionM, [1.0, -squash, 1.0]);
 
-      // Draw reflection only where stencil=1 (floor, not walls/pedestals)
-      gl.stencilFunc(gl.EQUAL, 1, 0xFF);
-      gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
-      drawMesh(meshes.marble, reflectionM, [0.65,0.7,0.8], [0.05,0.05,0.08], baseAlpha, holeMask, false);
+      // Draw the squashed reflection
+      drawMesh(meshes.marble, reflectionM, [0.5, 0.55, 0.7], [0.1, 0.1, 0.15], baseAlpha * 0.7, holeMask, false);
 
       // Restore state
+      gl.depthMask(true);
+      gl.depthFunc(gl.LESS);
       if (isInVR) gl.colorMask(true, true, true, true);
-      gl.stencilMask(0xFF);
-      gl.disable(gl.STENCIL_TEST);
-      gl.uniform1f(uniforms.reflectionClip, 0.0);
     }
 
     // Wall reflection configuration for floor reflections
