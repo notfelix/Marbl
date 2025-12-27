@@ -391,7 +391,7 @@
      * COORDINATES: Y is up, levels stack downward (negative Y), camera looks from above
      */
 
-    const GAME_VERSION = 'v0.110d';
+    const GAME_VERSION = 'v0.110e';
 
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     // XR-capable devices (like Quest) should use desktop-class rendering quality
@@ -1067,15 +1067,9 @@
       return 1.0 - shadow * proximityFade;
     }
 
-    // Unpack depth from RGBA (matches packDepth in shadow shader)
-    float unpackDepth(vec4 rgba) {
-      const vec4 bitShift = vec4(1.0 / (256.0 * 256.0 * 256.0), 1.0 / (256.0 * 256.0), 1.0 / 256.0, 1.0);
-      return dot(rgba, bitShift);
-    }
-
     float sampleShadow(vec2 uv, float compareDepth) {
       if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 1.0;
-      float closestDepth = unpackDepth(texture2D(uShadowMap, uv));
+      float closestDepth = texture2D(uShadowMap, uv).r;
       return compareDepth > closestDepth ? 0.0 : 1.0;
     }
 
@@ -1096,7 +1090,8 @@
       vec3 n = normalize(vNormal);
       vec3 lightDir = normalize(uLightDir);
       // Bias based on surface angle to light (reduces shadow acne)
-      float bias = max(0.003 * (1.0 - dot(n, lightDir)), 0.001);
+      // Larger bias for 8-bit color texture precision
+      float bias = max(0.01 * (1.0 - dot(n, lightDir)), 0.005);
       float compareDepth = projCoords.z - bias;
 
       // Simple 5x5 PCF for soft shadows (25 samples)
@@ -1251,7 +1246,7 @@
     const SHADOW_MAP_SIZE = isDesktopClass ? 2048 : 1024;
 
     // Shadow depth shaders (render from light's perspective)
-    // Encodes depth to RGBA for better mobile/Quest compatibility
+    // Stores depth directly in RGB for mobile/Quest compatibility
     const shadowVsSource = `
     attribute vec3 aPosition;
     uniform mat4 uLightMVP;
@@ -1263,16 +1258,8 @@
     const shadowFsSource = `
     precision highp float;
     varying float vDepth;
-    // Pack depth into RGBA for better precision on mobile
-    vec4 packDepth(float depth) {
-      const vec4 bitShift = vec4(256.0 * 256.0 * 256.0, 256.0 * 256.0, 256.0, 1.0);
-      const vec4 bitMask = vec4(0.0, 1.0 / 256.0, 1.0 / 256.0, 1.0 / 256.0);
-      vec4 res = fract(depth * bitShift);
-      res -= res.xxyz * bitMask;
-      return res;
-    }
     void main() {
-      gl_FragColor = packDepth(vDepth);
+      gl_FragColor = vec4(vDepth, vDepth, vDepth, 1.0);
     }`;
 
     const shadowVs = createShader(gl.VERTEX_SHADER, shadowVsSource);
@@ -2703,7 +2690,7 @@
       const up = 0.3;
       const height = 1.0;
 
-      const lightDistance = 1000;  // Reduced from 2000 for better depth precision
+      const lightDistance = 2000;
       const lightPos = {
         x: right * lightDistance,
         y: height * lightDistance,
@@ -2714,9 +2701,9 @@
       // Up vector tilted to match desired shadow orientation
       const lightView = mat4LookAt(lightPos, lightTarget, { x: -0.5, y: 0, z: 1 });
 
-      // Tighter ortho size for better shadow resolution (board is 920x920, marble needs ~500 extra for shadow offset)
-      const orthoSize = 700;
-      const lightProj = mat4Ortho(-orthoSize, orthoSize, -orthoSize, orthoSize, 100, lightDistance * 2);
+      // Ortho size covers board (920x920) plus margin for shadow offset
+      const orthoSize = 1000;
+      const lightProj = mat4Ortho(-orthoSize, orthoSize, -orthoSize, orthoSize, 1, lightDistance * 3);
 
       return mat4Multiply(lightProj, lightView);
     }
