@@ -3082,6 +3082,40 @@
       gl.uniform1f(uniforms.reflectionClip, 0.0);
     }
 
+    // Wall reflection configuration for floor reflections
+    const wallFloorReflectionConfig = {
+      alpha: 0.15           // Base reflection intensity
+    };
+
+    function drawWallFloorReflections(boardM, level, levelAlpha, wallColor) {
+      if (levelAlpha <= 0.05) return;
+
+      const alpha = wallFloorReflectionConfig.alpha * levelAlpha;
+      const reflectionColor = (wallColor || [0.25, 0.25, 0.5]).map(c => c * 0.6);
+
+      // Disable depth test so reflections show through floor
+      gl.disable(gl.DEPTH_TEST);
+      gl.depthMask(false);
+
+      // Reflect walls: flip Y to mirror below floor plane
+      let wallReflectM = boardM;
+      wallReflectM = mat4Scale(wallReflectM, [1, -1, 1]);
+
+      for (const w of meshes.walls) {
+        drawMesh(w, wallReflectM, reflectionColor, [0.02, 0.02, 0.04], alpha, null, false);
+      }
+
+      // Reflect level-specific walls (wall grid)
+      if (level?.wallMeshes && Array.isArray(level.wallMeshes)) {
+        for (const w of level.wallMeshes) {
+          if (w) drawMesh(w, wallReflectM, reflectionColor, [0.02, 0.02, 0.04], alpha, null, false);
+        }
+      }
+
+      gl.enable(gl.DEPTH_TEST);
+      gl.depthMask(true);
+    }
+
     function drawOrbs(boardM, orbTime, levelIndex=0, alpha=1, opts={}) {
       // Skip orb rendering for nearly invisible levels
       if (alpha <= 0.03) return;
@@ -3349,6 +3383,11 @@
 
         gl.depthMask(allowDepthWrite);
         drawMesh(meshes.floor, matrix, palette.floor, [0.04,0.06,0.1], entry.alpha, level.hasHole ? mask : null, useShadows);
+
+        // Draw wall reflections on the floor (while stencil = 1)
+        gl.stencilFunc(gl.EQUAL, 1, 0xFF);
+        gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+        drawWallFloorReflections(matrix, level, entry.alpha, palette.wall);
 
         // Walls write 0 to stencil to block reflections where they cover
         gl.stencilFunc(gl.ALWAYS, 0, 0xFF);
