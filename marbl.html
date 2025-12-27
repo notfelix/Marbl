@@ -391,7 +391,7 @@
      * COORDINATES: Y is up, levels stack downward (negative Y), camera looks from above
      */
 
-    const GAME_VERSION = 'v0.114b';
+    const GAME_VERSION = 'v0.114c';
 
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     // XR-capable devices (like Quest) should use desktop-class rendering quality
@@ -3867,6 +3867,8 @@
         gl.disable(gl.SCISSOR_TEST);
 
         // Render boards
+        // First pass: Draw floors and pedestals (horizontal surfaces)
+        // Walls are drawn later so they can occlude the marble from side views
         for (const entry of boardEntries) {
           const { level, matrix, mask } = entry;
           const levelIdx = Number.isFinite(level?.index) ? level.index : 0;
@@ -3877,10 +3879,12 @@
             pedestal: rawPalette.pedestal || defaultBoardColors.pedestal,
             pedestalHole: rawPalette.pedestalHole || defaultBoardColors.pedestalHole
           };
+          entry.palette = palette; // Store for wall pass
           const allowDepthWrite = entry.alpha > 0.02;
           const isActiveLevel = level.index === activeLevelIndex;
           const marbleAboveLevel = marble.y > level.y && marble.y < level.y + levelDrop;
           const useShadows = (isActiveLevel || marbleAboveLevel) && entry.alpha > 0.6;
+          entry.useShadows = useShadows; // Store for wall pass
 
           gl.enable(gl.STENCIL_TEST);
           gl.stencilFunc(gl.ALWAYS, 1, 0xFF);
@@ -3892,17 +3896,7 @@
 
           gl.stencilFunc(gl.EQUAL, 1, 0xFF);
           gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
-          if (!isInVR) drawWallFloorReflections(matrix, level, entry.alpha, palette.wall); // Skip wall reflections in MR mode
-
-          gl.stencilFunc(gl.ALWAYS, 0, 0xFF);
-          gl.stencilMask(0xFF);
-
-          gl.enable(gl.CULL_FACE);
-          for(const w of meshes.walls) drawMesh(w, matrix, palette.wall, [0.04,0.05,0.09], entry.alpha, null, useShadows);
-          if (level.wallMeshes && Array.isArray(level.wallMeshes)) {
-            for(const w of level.wallMeshes) if (w) drawMesh(w, matrix, palette.wall, [0.04,0.05,0.09], entry.alpha, null, useShadows);
-          }
-          gl.disable(gl.CULL_FACE);
+          // Skip wall reflections in MR mode
 
           gl.stencilMask(0xFF);
           gl.stencilFunc(gl.ALWAYS, 2, 0xFF);
@@ -3941,21 +3935,30 @@
         }
         gl.depthMask(true);
 
-        // Draw marble
+        // Draw marble (clear depth first so it renders on top of floors)
         const boardTiltM = boardTransform(activeLevelY);
         const marbleTiltM = marbleTiltScale >= 0.999 ? boardTiltM : boardTransform(activeLevelY, marbleTiltScale);
         const marbleOrbAlpha = 1 - maxAlphaAbove;
 
         gl.depthMask(false);
         gl.disable(gl.DEPTH_TEST);
-        if (!isInVR) drawMarbleEffects(boardTiltM); // Skip marble reflection in MR mode
         gl.depthMask(true);
         gl.enable(gl.DEPTH_TEST);
-        // Clear depth so marble renders on top - alpha handles fade visibility
-        gl.clear(gl.DEPTH_BUFFER_BIT);
+        gl.clear(gl.DEPTH_BUFFER_BIT); // Clear so marble renders on top of floors
 
         let marbleM = mat4Translate(marbleTiltM, [marble.pos.x, marble.y - activeLevelY, marble.pos.z]);
         drawMesh(meshes.marble, marbleM, [0.7,0.7,0.7], [0.1,0.1,0.1], marbleOrbAlpha, null, false);
+
+        // Second pass: Draw walls AFTER marble so they occlude it from side views
+        gl.enable(gl.CULL_FACE);
+        for (const entry of boardEntries) {
+          const { level, matrix, palette, useShadows } = entry;
+          for(const w of meshes.walls) drawMesh(w, matrix, palette.wall, [0.04,0.05,0.09], entry.alpha, null, useShadows);
+          if (level.wallMeshes && Array.isArray(level.wallMeshes)) {
+            for(const w of level.wallMeshes) if (w) drawMesh(w, matrix, palette.wall, [0.04,0.05,0.09], entry.alpha, null, useShadows);
+          }
+        }
+        gl.disable(gl.CULL_FACE);
 
         // Draw orbs on active level
         const activeEntry = boardEntries.find(e => e.level.index === activeLevel?.index);
