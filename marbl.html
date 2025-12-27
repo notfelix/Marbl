@@ -3267,10 +3267,11 @@
           pedestalHole: rawPalette.pedestalHole || defaultBoardColors.pedestalHole
         };
         const allowDepthWrite = entry.alpha > 0.02;
-        // Only the active level (where marble is) should receive marble shadows
+        // Enable shadows on active level and the level marble is falling towards
         // Also require alpha > 0.6 to skip shadow sampling for fading levels
         const isActiveLevel = level.index === activeLevelIndex;
-        const useShadows = isActiveLevel && entry.alpha > 0.6;
+        const marbleAboveLevel = marble.y > level.y && marble.y < level.y + levelDrop;
+        const useShadows = (isActiveLevel || marbleAboveLevel) && entry.alpha > 0.6;
         gl.depthMask(allowDepthWrite);
         drawMesh(meshes.floor, matrix, palette.floor, [0.04,0.06,0.1], entry.alpha, level.hasHole ? mask : null, useShadows);
         const wallColor = palette.wall;
@@ -3305,7 +3306,7 @@
             const wildColor = [wave * 0.7, 0.3, 0.6 + wave * 0.3];
             pedColor = pedColor.map((c, i) => (c || 0) * 0.4 + wildColor[i] * 0.6);
           }
-          const pedUseShadows = isActiveLevel && pedAlpha > 0.6;
+          const pedUseShadows = (isActiveLevel || marbleAboveLevel) && pedAlpha > 0.6;
           if (pedCollapse > 0) gl.depthMask(false); // let the hole reveal the level below while fading
           drawMesh(pedMesh, pedM, pedColor, [0.05,0.06,0.1], pedAlpha, null, pedUseShadows);
           if (pedCollapse > 0) gl.depthMask(allowDepthWrite);
