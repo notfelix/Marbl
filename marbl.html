@@ -930,28 +930,37 @@
     uniform float uMarbleRadius;
 
     // Calculate shadow from a point light blocked by the marble sphere
-    // Uses angular geometry for proper circular shadows
+    // Optimized version using squared distances where possible
     float calcOrbShadow(vec3 lightPos, vec3 fragPos, vec3 sphereCenter, float sphereRadius) {
       vec3 lightToSphere = sphereCenter - lightPos;
       vec3 lightToFrag = fragPos - lightPos;
 
-      float distToSphere = length(lightToSphere);
-      float distToFrag = length(lightToFrag);
+      float distToSphereSq = dot(lightToSphere, lightToSphere);
+      float radiusSq = sphereRadius * sphereRadius;
 
       // Light too close to or inside sphere - no meaningful shadow
-      if (distToSphere < sphereRadius * 1.1) return 1.0;
+      // Compare squared: (1.1*r)^2 = 1.21*r^2
+      if (distToSphereSq < radiusSq * 1.21) return 1.0;
 
-      // Normalize directions
-      vec3 dirToSphere = lightToSphere / distToSphere;
-      vec3 dirToFrag = lightToFrag / distToFrag;
+      float distToSphere = sqrt(distToSphereSq);
+      float invDistToSphere = 1.0 / distToSphere;
+
+      // Normalize direction to sphere (reuse invDist)
+      vec3 dirToSphere = lightToSphere * invDistToSphere;
 
       // Check if fragment is in front of the sphere (between light and sphere)
       float projF = dot(lightToFrag, dirToSphere);
       if (projF < distToSphere - sphereRadius) return 1.0;
 
+      // Normalize direction to fragment
+      float distToFragSq = dot(lightToFrag, lightToFrag);
+      float invDistToFrag = inversesqrt(distToFragSq);
+      vec3 dirToFrag = lightToFrag * invDistToFrag;
+
       // Calculate the angular size of the shadow cone from the light's perspective
       // sin(theta) = radius / distance, where theta is the half-angle of the shadow cone
-      float sinTheta = sphereRadius / distToSphere;
+      float sinTheta = sphereRadius * invDistToSphere;
+      // cos^2 = 1 - sin^2, use inversesqrt for cos
       float cosTheta = sqrt(1.0 - sinTheta * sinTheta);
 
       // Calculate cosine of angle between light-to-sphere and light-to-fragment directions
@@ -1039,16 +1048,23 @@
       for (int i=0; i<MAX_POINTS; ++i) {
         if (i >= uPointCount) break;
         vec3 L = uPointPos[i] - vWorldPos;
-        float dist = length(L) + 1e-4;
+        float distSq = dot(L, L);
+        // Early exit: skip orbs too far to contribute meaningfully
+        float atten = uPointIntensity[i] / (1.0 + distSq * 0.0008);
+        if (atten < 0.015) continue;  // Hard cutoff at low values
+
+        // Smooth fade between 0.015 and 0.06 to avoid visible edge
+        float fadeOut = smoothstep(0.015, 0.06, atten);
+
+        float dist = sqrt(distSq) + 1e-4;
         vec3 ld = L / dist;
         float halfLambert = dot(n, ld) * 0.5 + 0.5;
         float diffP = halfLambert * halfLambert;
         float ambient = 0.25;  // Minimum glow regardless of angle
         float lighting = ambient + (1.0 - ambient) * diffP;
-        float atten = uPointIntensity[i] / (1.0 + dist * dist * 0.0008);
         // Calculate shadow from marble blocking this orb's light
         float orbShadow = calcOrbShadow(uPointPos[i], vWorldPos, uMarbleCenter, uMarbleRadius);
-        color += uPointColor[i] * lighting * atten * orbShadow;
+        color += uPointColor[i] * lighting * atten * orbShadow * fadeOut;
       }
       color = clamp(color, 0.0, 2.5);
       gl_FragColor = vec4(color, uAlpha);
@@ -1372,11 +1388,11 @@
     const gyroSensitivity = 35; // degrees to reach full tilt
     const gyroDeadzone = 2; // degrees
     const history = [];
-    const maxHistoryFrames = isMobile ? 600 : 3600; // ~10s mobile, ~60s desktop
+    const maxHistoryFrames = isMobile ? 600 : 1800; // ~20s mobile, ~60s desktop (at half-rate recording)
     const starHistory = [];
     const maxStarHistoryFrames = 180; // ~3s at 60fps for accurate star reversal
     let starsReversed = false;
-    const rewindSpeed = isMobile ? 2.0 : 1.5;
+    const rewindSpeed = 2.0;  // 2x speed to match half-rate recording
     let historyFrameCounter = 0;
     let rewindAccumulator = 0;
     let rewindBlockedPersist = false;  // Persists blocked state across frames
@@ -1586,11 +1602,9 @@
     }
 
     function pushHistory() {
-      // On mobile, only record every 2nd frame to reduce memory pressure
-      if (isMobile) {
-        historyFrameCounter++;
-        if (historyFrameCounter % 2 !== 0) return;
-      }
+      // Record every 2nd frame to reduce memory usage (2x rewind speed compensates)
+      historyFrameCounter++;
+      if (historyFrameCounter % 2 !== 0) return;
       history.push(captureState());
       if (history.length > maxHistoryFrames) history.shift();
       // Separate star history with shorter duration
@@ -2995,6 +3009,8 @@
     }
 
     function drawOrbs(boardM, orbTime, levelIndex=0, alpha=1, opts={}) {
+      // Skip orb rendering for nearly invisible levels
+      if (alpha <= 0.03) return;
       const includeFollowing = opts.includeFollowing ?? true;
       const followingOnly = opts.followingOnly ?? false;
       const liftOffset = opts.liftOffset;
@@ -3212,7 +3228,7 @@
           ? 1
           : Math.max(0, Math.min(1, 1 - (heightBelow / fadeDepth)));
         const fade = Math.min(approachFade, departureFade);
-        if (fade <= 0.001) continue;
+        if (fade <= 0.02) continue;  // Skip nearly invisible levels earlier
         const levelHoles = holesForLevel(level);
         const mask = level.hasHole && levelHoles.length ? { holes: levelHoles } : null;
         boardEntries.push({ level, matrix: boardTransform(level.y), mask, alpha: fade });
@@ -3240,14 +3256,16 @@
           pedestal: rawPalette.pedestal || defaultBoardColors.pedestal,
           pedestalHole: rawPalette.pedestalHole || defaultBoardColors.pedestalHole
         };
-        const allowDepthWrite = entry.alpha > 0.001;
+        const allowDepthWrite = entry.alpha > 0.02;
+        // Disable expensive shadows for fading levels (< 60% visible)
+        const useShadows = entry.alpha > 0.6;
         gl.depthMask(allowDepthWrite);
-        drawMesh(meshes.floor, matrix, palette.floor, [0.04,0.06,0.1], entry.alpha, level.hasHole ? mask : null);
+        drawMesh(meshes.floor, matrix, palette.floor, [0.04,0.06,0.1], entry.alpha, level.hasHole ? mask : null, useShadows);
         const wallColor = palette.wall;
         gl.enable(gl.CULL_FACE);
-        for(const w of meshes.walls) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
+        for(const w of meshes.walls) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha, null, useShadows);
         if (level.wallMeshes && Array.isArray(level.wallMeshes)) {
-          for(const w of level.wallMeshes) if (w) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha);
+          for(const w of level.wallMeshes) if (w) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha, null, useShadows);
         }
         gl.disable(gl.CULL_FACE);
         const pedestals = pedestalsForLevel(level);
@@ -3257,7 +3275,7 @@
           const pedCollapse = collapseProgressFor(level.index, idx);
           const pedMesh = pedCollapse > 0 ? meshes.pedestalHole : meshes.pedestal;
           const pedAlpha = pedCollapse > 0 ? entry.alpha * pedestalCollapseAlpha(pedCollapse) : entry.alpha;
-          if (pedAlpha <= 0.001) continue;
+          if (pedAlpha <= 0.02) continue;  // Skip nearly invisible pedestals
           let pedM = matrix;
           pedM = mat4Translate(pedM, [pos.x, 0, pos.z]);
           pedM = mat4Scale(pedM, [1, height / pedestal.height, 1]);
@@ -3275,8 +3293,9 @@
             const wildColor = [wave * 0.7, 0.3, 0.6 + wave * 0.3];
             pedColor = pedColor.map((c, i) => (c || 0) * 0.4 + wildColor[i] * 0.6);
           }
+          const pedUseShadows = pedAlpha > 0.6;
           if (pedCollapse > 0) gl.depthMask(false); // let the hole reveal the level below while fading
-          drawMesh(pedMesh, pedM, pedColor, [0.05,0.06,0.1], pedAlpha);
+          drawMesh(pedMesh, pedM, pedColor, [0.05,0.06,0.1], pedAlpha, null, pedUseShadows);
           if (pedCollapse > 0) gl.depthMask(allowDepthWrite);
         }
         // Draw level orbs with depth so lower levels stay occluded by boards
