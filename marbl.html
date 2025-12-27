@@ -337,7 +337,7 @@
     <canvas id="c" width="1024" height="1024"></canvas>
     <div id="rewind-bar-container"></div>
   </div>
-  <button id="vr-button">Enter MR<span class="version">v0.103b</span></button>
+  <button id="vr-button">Enter MR<span class="version">v0.103d</span></button>
   <div id="level-picker">
     <h1>MARBL</h1>
     <p>No levels found. Load a level file to start playing, or place <code>marbl-levels.js</code> in the same directory.</p>
@@ -1091,22 +1091,26 @@
 
       // Smooth shadow strength based on surface facing
       float facingLight = max(0.0, dot(n, lightDir));
-      shadow = mix(1.0, shadow, facingLight * 0.85 + 0.15);
+      shadow = mix(1.0, shadow, facingLight * 0.95 + 0.05);
+
+      // Make shadow more pronounced (0.3 = darker shadows)
+      shadow = shadow * 0.7 + 0.3 * shadow * shadow;
 
       return shadow;
     }
 
     void main(){
       // Clip reflection fragments outside floor bounds (soft edge)
+      // Use world-space position for consistent clipping in VR
       if (uReflectionClip > 0.5) {
         float margin = 12.0; // Soft edge margin
         float clipX = min(
-          smoothstep(uFloorBounds.x - margin, uFloorBounds.x + margin, vWorldPos.x),
-          smoothstep(uFloorBounds.z + margin, uFloorBounds.z - margin, vWorldPos.x)
+          smoothstep(uFloorBounds.x - margin, uFloorBounds.x + margin, vWorldPosOriginal.x),
+          smoothstep(uFloorBounds.z + margin, uFloorBounds.z - margin, vWorldPosOriginal.x)
         );
         float clipZ = min(
-          smoothstep(uFloorBounds.y - margin, uFloorBounds.y + margin, vWorldPos.z),
-          smoothstep(uFloorBounds.w + margin, uFloorBounds.w - margin, vWorldPos.z)
+          smoothstep(uFloorBounds.y - margin, uFloorBounds.y + margin, vWorldPosOriginal.z),
+          smoothstep(uFloorBounds.w + margin, uFloorBounds.w - margin, vWorldPosOriginal.z)
         );
         float clipMask = clipX * clipZ;
         if (clipMask < 0.01) discard;
@@ -1117,7 +1121,9 @@
 
       // Apply shadow to directional light
       float shadow = calculateShadow();
-      vec3 color = uAmbient + uColor * diff * shadow;
+      // Amplify shadow effect for visibility
+      float shadowEffect = shadow * shadow; // Quadratic makes shadows darker
+      vec3 color = uAmbient * (0.3 + 0.7 * shadowEffect) + uColor * diff * shadowEffect;
 
       float holeMask = 1.0;
       for (int i=0; i<MAX_HOLES; ++i) {
@@ -3136,40 +3142,19 @@
       // In MR mode, prevent reflections from affecting alpha (would create transparency)
       if (isInVR) gl.colorMask(true, true, true, false);
 
-      // Determine which surface the marble is on
-      const pedHeight = pedestalHeightAt(marble.pos.x, marble.pos.z, supportLevel);
-      const onPedestal = pedHeight > marble.r * 0.5; // On pedestal if height is significant
+      // Single reflection approach: mirror across the surface directly below the marble
+      // This provides consistent appearance from all viewing angles in MR
+      const reflectionSurfaceY = planeY; // Surface height below marble (floor or pedestal)
+      const distAboveSurface = marble.y - reflectionSurfaceY;
+      const reflectionY = reflectionSurfaceY - distAboveSurface + 1.2; // Small offset to avoid z-fighting
 
-      if (!onPedestal) {
-        // === FLOOR REFLECTION (stencil == 1) ===
-        // Simple vertical mirror on flat floor
-        const floorY = levelY; // Floor is at level base height
-        const floorDistAbove = marble.y - floorY;
-        const floorReflectionY = floorY - floorDistAbove + 1.2;
+      let reflectionM = boardM;
+      reflectionM = mat4Translate(reflectionM, [marble.pos.x, reflectionY - levelY, marble.pos.z]);
+      reflectionM = mat4Scale(reflectionM, [1, -1, 1]); // Flip vertically
 
-        let floorReflectionM = boardM;
-        floorReflectionM = mat4Translate(floorReflectionM, [marble.pos.x, floorReflectionY - levelY, marble.pos.z]);
-        floorReflectionM = mat4Scale(floorReflectionM, [1, -1, 1]);
-
-        gl.stencilFunc(gl.EQUAL, 1, 0xFF);
-        drawMesh(meshes.marble, floorReflectionM, [0.65,0.7,0.8], [0.05,0.05,0.08], baseAlpha, holeMask, false);
-      } else {
-        // === PEDESTAL REFLECTION (stencil == 2) ===
-        // Oriented reflection on sloped pedestal surfaces
-        const pedSurfaceY = levelY + pedHeight;
-        const pedNormal = pedestalNormalAt(marble.pos.x, marble.pos.z, supportLevel);
-        const pedOrient = mat4FromNormal(pedNormal);
-        const pedDistAbove = marble.y - pedSurfaceY;
-        const pedReflectionY = pedSurfaceY - pedDistAbove + 1.2;
-
-        let pedReflectionM = boardM;
-        pedReflectionM = mat4Translate(pedReflectionM, [marble.pos.x, pedReflectionY - levelY, marble.pos.z]);
-        pedReflectionM = mat4Multiply(pedReflectionM, pedOrient);
-        pedReflectionM = mat4Scale(pedReflectionM, [1, -1, 1]);
-
-        gl.stencilFunc(gl.EQUAL, 2, 0xFF);
-        drawMesh(meshes.marble, pedReflectionM, [0.65,0.7,0.8], [0.05,0.05,0.08], baseAlpha, holeMask, false);
-      }
+      // Draw reflection on both floor (stencil=1) and pedestal (stencil=2) surfaces
+      gl.stencilFunc(gl.LEQUAL, 1, 0xFF); // Matches stencil values 1 and 2
+      drawMesh(meshes.marble, reflectionM, [0.65,0.7,0.8], [0.05,0.05,0.08], baseAlpha, holeMask, false);
 
       // Restore alpha writes
       if (isInVR) gl.colorMask(true, true, true, true);
