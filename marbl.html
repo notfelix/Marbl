@@ -391,7 +391,7 @@
      * COORDINATES: Y is up, levels stack downward (negative Y), camera looks from above
      */
 
-    const GAME_VERSION = 'v0.110e';
+    const GAME_VERSION = 'v0.110f';
 
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     // XR-capable devices (like Quest) should use desktop-class rendering quality
@@ -1067,52 +1067,48 @@
       return 1.0 - shadow * proximityFade;
     }
 
-    float sampleShadow(vec2 uv, float compareDepth) {
-      if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 1.0;
-      float closestDepth = texture2D(uShadowMap, uv).r;
-      return compareDepth > closestDepth ? 0.0 : 1.0;
-    }
-
+    // Analytical directional shadow - projects marble shadow onto floor
+    // Similar approach to orb shadows but for directional light
     float calculateShadow() {
       if (uShadowEnabled < 0.5) return 1.0;
 
-      // Perspective divide and transform to [0,1] range
-      vec3 projCoords = vLightSpacePos.xyz / vLightSpacePos.w;
-      projCoords = projCoords * 0.5 + 0.5;
-
-      // Outside shadow map bounds - no shadow
-      if (projCoords.x < 0.0 || projCoords.x > 1.0 ||
-          projCoords.y < 0.0 || projCoords.y > 1.0 ||
-          projCoords.z > 1.0) {
-        return 1.0;
-      }
-
-      vec3 n = normalize(vNormal);
+      // Light direction (pointing toward light)
       vec3 lightDir = normalize(uLightDir);
-      // Bias based on surface angle to light (reduces shadow acne)
-      // Larger bias for 8-bit color texture precision
-      float bias = max(0.01 * (1.0 - dot(n, lightDir)), 0.005);
-      float compareDepth = projCoords.z - bias;
 
-      // Simple 5x5 PCF for soft shadows (25 samples)
-      float texelSize = 1.0 / uShadowMapSize;
-      float shadow = 0.0;
-      for (int x = -2; x <= 2; x++) {
-        for (int y = -2; y <= 2; y++) {
-          vec2 offset = vec2(float(x), float(y)) * texelSize * 1.5;
-          shadow += sampleShadow(projCoords.xy + offset, compareDepth);
-        }
-      }
-      shadow /= 25.0;
+      // Fragment position on floor (world space)
+      vec3 fragPos = vWorldPosOriginal;
 
-      // Smooth shadow strength based on surface facing
-      float facingLight = max(0.0, dot(n, lightDir));
-      shadow = mix(1.0, shadow, facingLight * 0.95 + 0.05);
+      // Marble center and radius
+      vec3 sphereCenter = uMarbleCenter;
+      float sphereRadius = uMarbleRadius;
 
-      // Make shadow more pronounced (0.3 = darker shadows)
-      shadow = shadow * 0.7 + 0.3 * shadow * shadow;
+      // Calculate where the shadow ray from this fragment hits the marble's height
+      // Ray: fragPos + t * lightDir = point at marble height
+      // Solve for t: fragPos.y + t * lightDir.y = sphereCenter.y
+      float t = (sphereCenter.y - fragPos.y) / lightDir.y;
 
-      return shadow;
+      // If t < 0, light comes from below or fragment is above marble - no shadow
+      if (t < 0.0) return 1.0;
+
+      // Point where shadow ray reaches marble height
+      vec3 shadowPoint = fragPos + t * lightDir;
+
+      // Distance from shadow point to marble center (in XZ plane at marble height)
+      float distToCenter = length(shadowPoint - sphereCenter);
+
+      // Soft shadow edge - penumbra based on height difference
+      float heightDiff = max(0.0, sphereCenter.y - fragPos.y);
+      float penumbra = sphereRadius * 0.15 + heightDiff * 0.08;  // Softer edges when marble is higher
+
+      // Shadow intensity with soft falloff
+      float shadowMask = smoothstep(sphereRadius + penumbra, sphereRadius - penumbra * 0.5, distToCenter);
+
+      // Fade shadow based on height (shadows get softer/fainter when marble is high)
+      float heightFade = 1.0 - smoothstep(0.0, sphereRadius * 8.0, heightDiff);
+      shadowMask *= heightFade;
+
+      // Return 1.0 for lit, lower for shadowed
+      return 1.0 - shadowMask * 0.7;  // 0.7 = shadow darkness
     }
 
     void main(){
