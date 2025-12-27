@@ -391,7 +391,7 @@
      * COORDINATES: Y is up, levels stack downward (negative Y), camera looks from above
      */
 
-    const GAME_VERSION = 'v0.106f';
+    const GAME_VERSION = 'v0.106g';
 
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     // XR-capable devices (like Quest) should use desktop-class rendering quality
@@ -2815,23 +2815,17 @@
       gl.clearColor(1, 0, 1, 1);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-      gl.disable(gl.DEPTH_TEST);  // Disable depth test for simple capture
+      gl.disable(gl.DEPTH_TEST);
       gl.disable(gl.BLEND);
+      gl.disable(gl.CULL_FACE);  // Make sure no culling
 
       gl.useProgram(program);
       gl.uniform1f(uniforms.reflectionEnabled, 0.0);
 
-      // Very simple: render marble mesh (centered at origin) with scaling to fit in clip space
-      // Marble radius is 25, so scale by 1/50 to fit nicely in -0.5 to 0.5 range
-      const scale = 1.0 / (marble.r * 2.0);
-      // Simple top-down orthographic: X->X, Z->Y, Y->depth (ignored with depth test off)
-      const mvp = new Float32Array([
-        scale, 0, 0, 0,
-        0, 0, scale, 0,   // Z maps to screen Y
-        0, -scale, 0, 0,  // Y maps to depth (negated)
-        0, 0, 0, 1
-      ]);
+      // Scale marble (radius 25) to fit in clip space (-1 to 1)
+      // Use mat4Scale to create proper transformation
       const marbleModel = mat4Identity();
+      const mvp = mat4Scale(mat4Identity(), [0.03, 0.03, 0.03]);  // Scale down by ~33x
 
       gl.uniformMatrix4fv(uniforms.mvp, false, mvp);
       gl.uniformMatrix4fv(uniforms.model, false, marbleModel);
