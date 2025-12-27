@@ -322,22 +322,28 @@
       margin-top: 0.25rem;
       opacity: 0.6;
     }
+    .hud .version {
+      display: block;
+      margin-top: 0.75rem;
+      font-size: 10px;
+      opacity: 0.5;
+    }
   </style>
 </head>
 <body>
   <canvas id="stars"></canvas>
-  <div class="hud" id="hud">WASD to tilt<br>SPACE to rewind</div>
+  <div class="hud" id="hud">WASD to tilt<br>SPACE to rewind<span class="version"></span></div>
   <div id="mobile-start-overlay" class="hidden">
     <h2>MARBL</h2>
     <p>Tilt your device to roll the marble.<br>Tap anywhere to rewind time.</p>
     <button id="mobile-start-btn">Start Game</button>
-    <span class="version">v0.103g</span>
+    <span class="version"></span>
   </div>
   <div id="game-container">
     <canvas id="c" width="1024" height="1024"></canvas>
     <div id="rewind-bar-container"></div>
   </div>
-  <button id="vr-button">Enter MR<span class="version">v0.103g</span></button>
+  <button id="vr-button">Enter MR<span class="version"></span></button>
   <div id="level-picker">
     <h1>MARBL</h1>
     <p>No levels found. Load a level file to start playing, or place <code>marbl-levels.js</code> in the same directory.</p>
@@ -385,11 +391,16 @@
      * COORDINATES: Y is up, levels stack downward (negative Y), camera looks from above
      */
 
+    const GAME_VERSION = 'v0.104';
+
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     // XR-capable devices (like Quest) should use desktop-class rendering quality
     const isXRCapable = !!navigator.xr;
     const isDesktopClass = !isMobile || isXRCapable;
     let pixelatedMode = false; // Disabled for testing shadows
+
+    // Set version text on all version elements
+    document.querySelectorAll('.version').forEach(el => el.textContent = GAME_VERSION);
 
     // ========================================
     // WEBXR STATE
