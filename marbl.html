@@ -391,7 +391,7 @@
      * COORDINATES: Y is up, levels stack downward (negative Y), camera looks from above
      */
 
-    const GAME_VERSION = 'v0.104';
+    const GAME_VERSION = 'v0.105';
 
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     // XR-capable devices (like Quest) should use desktop-class rendering quality
@@ -3490,12 +3490,8 @@
         gl.depthMask(allowDepthWrite);
         drawMesh(meshes.floor, matrix, palette.floor, [0.04,0.06,0.1], entry.alpha, level.hasHole ? mask : null, useShadows);
 
-        // Draw wall reflections on the floor (while stencil = 1)
-        gl.stencilFunc(gl.EQUAL, 1, 0xFF);
-        gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
-        drawWallFloorReflections(matrix, level, entry.alpha, palette.wall);
-
-        // Walls write 0 to stencil to block reflections where they cover
+        // Draw walls FIRST so they write stencil=0 before reflections are drawn
+        // This ensures reflections are properly masked by wall footprints
         gl.stencilFunc(gl.ALWAYS, 0, 0xFF);
         gl.stencilMask(0xFF);
 
@@ -3506,6 +3502,13 @@
           for(const w of level.wallMeshes) if (w) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha, null, useShadows);
         }
         gl.disable(gl.CULL_FACE);
+
+        // Now draw wall reflections - stencil=1 only on floor (not where walls wrote 0)
+        gl.stencilFunc(gl.EQUAL, 1, 0xFF);
+        gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+        gl.stencilMask(0x00); // Don't modify stencil during reflection drawing
+        drawWallFloorReflections(matrix, level, entry.alpha, palette.wall);
+        gl.stencilMask(0xFF);
 
         // Re-enable stencil writing for pedestals with value 2 (floor uses 1)
         gl.stencilMask(0xFF);
@@ -4033,10 +4036,7 @@
           gl.depthMask(allowDepthWrite);
           drawMesh(meshes.floor, matrix, palette.floor, [0.04,0.06,0.1], entry.alpha, level.hasHole ? mask : null, useShadows);
 
-          gl.stencilFunc(gl.EQUAL, 1, 0xFF);
-          gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
-          drawWallFloorReflections(matrix, level, entry.alpha, palette.wall);
-
+          // Draw walls FIRST so they write stencil=0 before reflections are drawn
           gl.stencilFunc(gl.ALWAYS, 0, 0xFF);
           gl.stencilMask(0xFF);
 
@@ -4046,6 +4046,13 @@
             for(const w of level.wallMeshes) if (w) drawMesh(w, matrix, palette.wall, [0.04,0.05,0.09], entry.alpha, null, useShadows);
           }
           gl.disable(gl.CULL_FACE);
+
+          // Now draw wall reflections - stencil=1 only on floor (not where walls wrote 0)
+          gl.stencilFunc(gl.EQUAL, 1, 0xFF);
+          gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+          gl.stencilMask(0x00);
+          drawWallFloorReflections(matrix, level, entry.alpha, palette.wall);
+          gl.stencilMask(0xFF);
 
           gl.stencilMask(0xFF);
           gl.stencilFunc(gl.ALWAYS, 2, 0xFF);
