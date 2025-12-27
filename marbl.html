@@ -391,7 +391,7 @@
      * COORDINATES: Y is up, levels stack downward (negative Y), camera looks from above
      */
 
-    const GAME_VERSION = 'v0.106k';
+    const GAME_VERSION = 'v0.106l';
 
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     // XR-capable devices (like Quest) should use desktop-class rendering quality
@@ -3238,33 +3238,34 @@
       const baseAlpha = 0.22 * Math.max(0, proximityStrength * 0.58);
       if (baseAlpha <= 0.01) return; // Skip if too faint
 
-      // Simple approach: draw reflection directly below marble on the floor surface
-      // No stencil needed - the reflection is positioned to avoid wall occlusion issues
+      // True Y-flipped reflection with proper depth occlusion
 
       // In MR mode, prevent reflections from affecting alpha
       if (isInVR) gl.colorMask(true, true, true, false);
 
       gl.enable(gl.DEPTH_TEST);
-      gl.depthFunc(gl.LEQUAL);  // LEQUAL so reflection draws on floor surface
+      gl.depthFunc(gl.LEQUAL);
       gl.depthMask(false);  // Don't write depth
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-      // Position reflection just above the floor surface (to avoid z-fighting)
-      // Use the actual surface height, not the reflected position
-      const surfaceNormal = levelNormalAt(supportLevel, marble.pos.x, marble.pos.z);
+      // Calculate proper reflected position - mirror across floor plane
+      const heightAboveFloor = marble.y - planeY;
+      const reflectedY = planeY - heightAboveFloor;
 
       let reflectionM = boardM;
-      // Place at marble XZ position, on the floor surface (planeY relative to level)
-      const floorOffset = planeY - levelY + 0.5;  // Slightly above floor to avoid z-fighting
-      reflectionM = mat4Translate(reflectionM, [marble.pos.x, floorOffset, marble.pos.z]);
+      // Position at marble XZ, at reflected Y (relative to level)
+      reflectionM = mat4Translate(reflectionM, [marble.pos.x, reflectedY - levelY, marble.pos.z]);
 
-      // Flatten and flip the marble to create a "squashed" reflection
-      const squash = 0.15;  // How flat the reflection is
-      reflectionM = mat4Scale(reflectionM, [1.0, -squash, 1.0]);
+      // Y-flip the marble geometry for true reflection
+      reflectionM = mat4Scale(reflectionM, [1, -1, 1]);
 
-      // Draw the squashed reflection
-      drawMesh(meshes.marble, reflectionM, [0.5, 0.55, 0.7], [0.1, 0.1, 0.15], baseAlpha * 0.7, holeMask, false);
+      // Slightly desaturated, cooler reflection color
+      const reflectColor = [0.5, 0.52, 0.6];
+      const reflectAmbient = [0.1, 0.1, 0.12];
+
+      // Draw the reflected marble with slightly boosted alpha for visibility
+      drawMesh(meshes.marble, reflectionM, reflectColor, reflectAmbient, baseAlpha * 1.5, holeMask, false);
 
       // Restore state
       gl.depthMask(true);
