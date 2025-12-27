@@ -356,7 +356,7 @@
     const starCanvas = document.getElementById('stars');
     const canvas = document.getElementById('c');
     const starCtx = starCanvas.getContext('2d');
-    const gl = canvas.getContext('webgl2', { antialias: true, alpha: true });
+    const gl = canvas.getContext('webgl2', { antialias: true, alpha: true, stencil: true });
     if (!gl) {
       alert('WebGL2 not supported');
       throw new Error('WebGL2 not supported');
@@ -938,6 +938,8 @@
     uniform float uHoleSoftness[MAX_HOLES];
     uniform vec3 uMarbleCenter;
     uniform float uMarbleRadius;
+    uniform vec4 uFloorBounds;      // (minX, minZ, maxX, maxZ) for reflection clipping
+    uniform float uReflectionClip;  // 1.0 when rendering reflection, 0.0 otherwise
 
     // Calculate shadow from a point light blocked by the marble sphere
     // Optimized version using squared distances where possible
@@ -1033,6 +1035,21 @@
     }
 
     void main(){
+      // Clip reflection fragments outside floor bounds (soft edge)
+      if (uReflectionClip > 0.5) {
+        float margin = 12.0; // Soft edge margin
+        float clipX = min(
+          smoothstep(uFloorBounds.x - margin, uFloorBounds.x + margin, vWorldPos.x),
+          smoothstep(uFloorBounds.z + margin, uFloorBounds.z - margin, vWorldPos.x)
+        );
+        float clipZ = min(
+          smoothstep(uFloorBounds.y - margin, uFloorBounds.y + margin, vWorldPos.z),
+          smoothstep(uFloorBounds.w + margin, uFloorBounds.w - margin, vWorldPos.z)
+        );
+        float clipMask = clipX * clipZ;
+        if (clipMask < 0.01) discard;
+      }
+
       vec3 n = normalize(vNormal);
       float diff = max(dot(n, normalize(uLightDir)), 0.0);
 
@@ -1127,7 +1144,9 @@
       holeRadii: gl.getUniformLocation(program, 'uHoleRadii[0]'),
       holeSoftness: gl.getUniformLocation(program, 'uHoleSoftness[0]'),
       marbleCenter: gl.getUniformLocation(program, 'uMarbleCenter'),
-      marbleRadius: gl.getUniformLocation(program, 'uMarbleRadius')
+      marbleRadius: gl.getUniformLocation(program, 'uMarbleRadius'),
+      floorBounds: gl.getUniformLocation(program, 'uFloorBounds'),
+      reflectionClip: gl.getUniformLocation(program, 'uReflectionClip')
     };
     const MAX_HOLES = 4;
     const MAX_POINT_LIGHTS = 12;
@@ -2622,6 +2641,8 @@
 
       // Switch back to main program
       gl.useProgram(program);
+      // Default: no reflection clipping (will be enabled in drawMarbleEffects)
+      gl.uniform1f(uniforms.reflectionClip, 0.0);
     }
 
     // Input and physics
@@ -3000,28 +3021,65 @@
         ? lastGroundSurfaceHeight
         : (Number.isFinite(currentSupport?.surfaceHeight) ? currentSupport.surfaceHeight : levelHeightAt(supportLevel, marble.pos.x, marble.pos.z));
       const planeY = Number.isFinite(surfaceY) ? surfaceY : (marble.y - marble.r);
-      const normal = levelNormalAt(supportLevel, marble.pos.x, marble.pos.z);
-      const orient = mat4FromNormal(normal);
-      const deltaY = Number.isFinite(surfaceY) ? marble.y - (surfaceY + marble.r) : Infinity; // >0 above plane, <0 below
-      const altitudeForFx = deltaY > 0 ? deltaY : Infinity; // hide reflection once we fall through
+      const deltaY = Number.isFinite(surfaceY) ? marble.y - (surfaceY + marble.r) : Infinity;
+      const altitudeForFx = deltaY > 0 ? deltaY : Infinity;
 
-      // Calculate proximity for reflection fade (used to be for old blob shadow too)
+      // Calculate proximity for reflection fade
       const altitude = isAirborne()
         ? altitudeForFx
         : (Number.isFinite(currentSupport?.altitude) ? currentSupport.altitude : altitudeForFx);
       const proximityStrength = Number.isFinite(altitude) ? Math.max(0, Math.min(1, 1 - Math.max(0, altitude) / (marble.r * 2.5))) : 0;
 
-      // Reflection (mirror across the local surface plane)
-      // Shadow is now handled by shadow mapping in the main shader
-      const distanceAbove = marble.y - planeY;
-      if (deltaY >= 0) { // only show reflection while above the plane
-        const reflectionY = planeY - distanceAbove + 1.2;
-        let reflectionM = boardM;
-        reflectionM = mat4Translate(reflectionM, [marble.pos.x, reflectionY - levelY, marble.pos.z]);
-        reflectionM = mat4Multiply(reflectionM, orient);
-        reflectionM = mat4Scale(reflectionM, [1, -1, 1]);
-        drawMesh(meshes.marble, reflectionM, [0.65,0.7,0.8], [0.05,0.05,0.08], 0.22 * Math.max(0, proximityStrength * 0.58), holeMask, false); // Reflection doesn't receive shadow
+      if (deltaY < 0) return; // Don't show reflection when below surface
+
+      const baseAlpha = 0.22 * Math.max(0, proximityStrength * 0.58);
+      if (baseAlpha <= 0.01) return; // Skip if too faint
+
+      // Set up floor bounds for reflection clipping (inner area excluding walls)
+      const wallMargin = plane.wallThickness + marble.r * 0.5;
+      const halfW = plane.w / 2 - wallMargin;
+      const halfH = plane.h / 2 - wallMargin;
+      gl.uniform4f(uniforms.floorBounds, -halfW, -halfH, halfW, halfH);
+      gl.uniform1f(uniforms.reflectionClip, 1.0);
+
+      gl.enable(gl.STENCIL_TEST);
+      gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+
+      // === FLOOR REFLECTION (stencil == 1) ===
+      // Simple vertical mirror on flat floor
+      const floorY = levelY; // Floor is at level base height
+      const floorDistAbove = marble.y - floorY;
+      const floorReflectionY = floorY - floorDistAbove + 1.2;
+
+      let floorReflectionM = boardM;
+      floorReflectionM = mat4Translate(floorReflectionM, [marble.pos.x, floorReflectionY - levelY, marble.pos.z]);
+      floorReflectionM = mat4Scale(floorReflectionM, [1, -1, 1]);
+
+      gl.stencilFunc(gl.EQUAL, 1, 0xFF);
+      drawMesh(meshes.marble, floorReflectionM, [0.65,0.7,0.8], [0.05,0.05,0.08], baseAlpha, holeMask, false);
+
+      // === PEDESTAL REFLECTION (stencil == 2) ===
+      // Oriented reflection on sloped pedestal surfaces
+      const pedHeight = pedestalHeightAt(marble.pos.x, marble.pos.z, supportLevel);
+      if (pedHeight > 0) {
+        const pedSurfaceY = levelY + pedHeight;
+        const pedNormal = pedestalNormalAt(marble.pos.x, marble.pos.z, supportLevel);
+        const pedOrient = mat4FromNormal(pedNormal);
+        const pedDistAbove = marble.y - pedSurfaceY;
+        const pedReflectionY = pedSurfaceY - pedDistAbove + 1.2;
+
+        let pedReflectionM = boardM;
+        pedReflectionM = mat4Translate(pedReflectionM, [marble.pos.x, pedReflectionY - levelY, marble.pos.z]);
+        pedReflectionM = mat4Multiply(pedReflectionM, pedOrient);
+        pedReflectionM = mat4Scale(pedReflectionM, [1, -1, 1]);
+
+        gl.stencilFunc(gl.EQUAL, 2, 0xFF);
+        drawMesh(meshes.marble, pedReflectionM, [0.65,0.7,0.8], [0.05,0.05,0.08], baseAlpha, holeMask, false);
       }
+
+      gl.disable(gl.STENCIL_TEST);
+      // Reset reflection clipping for normal rendering
+      gl.uniform1f(uniforms.reflectionClip, 0.0);
     }
 
     function drawOrbs(boardM, orbTime, levelIndex=0, alpha=1, opts={}) {
@@ -3207,7 +3265,8 @@
       gl.enable(gl.DEPTH_TEST);
       gl.disable(gl.CULL_FACE);
       gl.clearColor(0, 0, 0, 0);
-      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      gl.clearStencil(0);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
 
       // ========================================
       // SHADOW PASS - Render marble to shadow map
@@ -3281,8 +3340,20 @@
         const isActiveLevel = level.index === activeLevelIndex;
         const marbleAboveLevel = marble.y > level.y && marble.y < level.y + levelDrop;
         const useShadows = (isActiveLevel || marbleAboveLevel) && entry.alpha > 0.6;
+
+        // Enable stencil writing for floor (mark where reflection is allowed)
+        gl.enable(gl.STENCIL_TEST);
+        gl.stencilFunc(gl.ALWAYS, 1, 0xFF);
+        gl.stencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
+        gl.stencilMask(0xFF);
+
         gl.depthMask(allowDepthWrite);
         drawMesh(meshes.floor, matrix, palette.floor, [0.04,0.06,0.1], entry.alpha, level.hasHole ? mask : null, useShadows);
+
+        // Walls write 0 to stencil to block reflections where they cover
+        gl.stencilFunc(gl.ALWAYS, 0, 0xFF);
+        gl.stencilMask(0xFF);
+
         const wallColor = palette.wall;
         gl.enable(gl.CULL_FACE);
         for(const w of meshes.walls) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha, null, useShadows);
@@ -3290,6 +3361,11 @@
           for(const w of level.wallMeshes) if (w) drawMesh(w, matrix, wallColor, [0.04,0.05,0.09], entry.alpha, null, useShadows);
         }
         gl.disable(gl.CULL_FACE);
+
+        // Re-enable stencil writing for pedestals with value 2 (floor uses 1)
+        gl.stencilMask(0xFF);
+        gl.stencilFunc(gl.ALWAYS, 2, 0xFF);
+
         const pedestals = pedestalsForLevel(level);
         const isWild = isWildPedestal(level.index);
         for(const { pos, idx } of pedestals){
@@ -3320,6 +3396,11 @@
           drawMesh(pedMesh, pedM, pedColor, [0.05,0.06,0.1], pedAlpha, null, pedUseShadows);
           if (pedCollapse > 0) gl.depthMask(allowDepthWrite);
         }
+
+        // Disable stencil writing/testing for orbs (they don't affect reflection clipping)
+        gl.disable(gl.STENCIL_TEST);
+        gl.stencilMask(0xFF);
+
         // Draw level orbs with depth so lower levels stay occluded by boards
         drawOrbs(matrix, orbAnimTime, level.index, entry.alpha, { includeFollowing: false });
       }
