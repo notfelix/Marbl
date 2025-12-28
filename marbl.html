@@ -391,7 +391,7 @@
      * COORDINATES: Y is up, levels stack downward (negative Y), camera looks from above
      */
 
-    const GAME_VERSION = 'v0.115';
+    const GAME_VERSION = 'v0.116';
 
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     // XR-capable devices (like Quest) should use desktop-class rendering quality
@@ -422,6 +422,13 @@
 
     // Current VR matrices (set during VR rendering, null otherwise)
     let currentVRMatrices = null;
+
+    // MR level following state - board rises as marble falls between levels
+    let vrLevelFollowY = 0;           // Current smoothed Y offset for level following
+    let vrFallStartY = null;          // Marble's Y when fall started (null = not falling)
+    let vrFallStartLevel = null;      // Level index when fall started
+    const vrFollowDelayRatio = 1/3;   // Fall this fraction before board starts rising
+    const vrFollowSmooth = 4;         // Smoothing factor for board movement
 
     const starCanvas = document.getElementById('stars');
     const canvas = document.getElementById('c');
@@ -2650,6 +2657,56 @@
       camera.target.y += (desiredTargetY - camera.target.y) * dt * smooth;
     }
 
+    // Update MR board height to follow marble between levels
+    // Board rises as marble falls, creating illusion of camera following
+    function updateVRLevelFollow(dt) {
+      if (!isInVR) return;
+
+      const airborne = isAirborne();
+      const currentLevel = getActiveLevel();
+      const currentLevelIndex = currentLevel?.index ?? 0;
+
+      // Detect start of fall through hole
+      if (airborne && vrFallStartY === null) {
+        // Just started falling - record start position
+        vrFallStartY = marble.y;
+        vrFallStartLevel = currentLevelIndex;
+      }
+
+      // Calculate target board offset based on current level
+      // Each level down = board needs to rise by levelDrop * VR_WORLD_SCALE
+      const targetLevelOffset = currentLevelIndex * levelDrop * VR_WORLD_SCALE;
+
+      let targetFollowY = targetLevelOffset;
+
+      // If falling, delay the board rise until marble has fallen 1/3 of the way
+      if (airborne && vrFallStartY !== null) {
+        const fallDistance = vrFallStartY - marble.y;
+        const delayDistance = levelDrop * vrFollowDelayRatio;
+
+        if (fallDistance < delayDistance) {
+          // Still in delay phase - keep board at previous level position
+          targetFollowY = vrFallStartLevel * levelDrop * VR_WORLD_SCALE;
+        } else {
+          // Past delay - interpolate board rise based on remaining fall
+          const remainingFall = levelDrop - delayDistance;
+          const fallProgress = Math.min(1, (fallDistance - delayDistance) / remainingFall);
+          const prevLevelOffset = vrFallStartLevel * levelDrop * VR_WORLD_SCALE;
+          const nextLevelOffset = (vrFallStartLevel + 1) * levelDrop * VR_WORLD_SCALE;
+          targetFollowY = prevLevelOffset + (nextLevelOffset - prevLevelOffset) * fallProgress;
+        }
+      }
+
+      // Clear fall tracking when landed
+      if (!airborne) {
+        vrFallStartY = null;
+        vrFallStartLevel = null;
+      }
+
+      // Smooth the board movement
+      vrLevelFollowY += (targetFollowY - vrLevelFollowY) * Math.min(1, dt * vrFollowSmooth);
+    }
+
     function screenToBoardXZ(clientX, clientY) {
       const rect = canvas.getBoundingClientRect();
       if (!rect.width || !rect.height) return null;
@@ -2869,8 +2926,8 @@
         // Use VR matrices and apply world transform
         proj = currentVRMatrices.proj;
         view = currentVRMatrices.view;
-        // Apply VR world transform: translate then scale
-        let vrTransform = mat4Translate(mat4Identity(), [VR_BOARD_OFFSET.x, VR_BOARD_OFFSET.y, VR_BOARD_OFFSET.z]);
+        // Apply VR world transform: translate then scale (include level follow offset)
+        let vrTransform = mat4Translate(mat4Identity(), [VR_BOARD_OFFSET.x, VR_BOARD_OFFSET.y + vrLevelFollowY, VR_BOARD_OFFSET.z]);
         vrTransform = mat4Scale(vrTransform, [VR_WORLD_SCALE, VR_WORLD_SCALE, VR_WORLD_SCALE]);
         finalModel = mat4Multiply(vrTransform, model);
       } else {
@@ -2928,7 +2985,7 @@
         // In VR mode, hole centers/radii must be transformed to match vertex space
         const vrScale = currentVRMatrices ? VR_WORLD_SCALE : 1;
         const vrOffsetX = currentVRMatrices ? VR_BOARD_OFFSET.x : 0;
-        const vrOffsetY = currentVRMatrices ? VR_BOARD_OFFSET.y : 0;
+        const vrOffsetY = currentVRMatrices ? VR_BOARD_OFFSET.y + vrLevelFollowY : 0;
         const vrOffsetZ = currentVRMatrices ? VR_BOARD_OFFSET.z : 0;
         for (let i = 0; i < count; i++) {
           const h = holes[i] || {};
@@ -3785,6 +3842,7 @@
 
       const dt = Math.min(delta, 0.1);
       updateCamera(dt);
+      updateVRLevelFollow(dt);
 
       // Compute active level for rendering
       const activeLevel = getActiveLevel();
@@ -4210,6 +4268,11 @@
       lastGroundedLevel = null;
       lastGroundSurfaceHeight = null;
 
+      // Reset MR level follow state
+      vrLevelFollowY = 0;
+      vrFallStartY = null;
+      vrFallStartLevel = null;
+
       refreshSupport();
       pushHistory();
     }
@@ -4325,6 +4388,12 @@
       refreshSupport();
       history.length = 0;
       pushHistory();
+
+      // Set MR level follow to correct height for this level (no animation)
+      vrLevelFollowY = levelIndex * levelDrop * VR_WORLD_SCALE;
+      vrFallStartY = null;
+      vrFallStartLevel = null;
+
       // Notify parent
       if (isEmbedded) {
         window.parent.postMessage({ type: 'marbl-jumped', levelIndex }, '*');
