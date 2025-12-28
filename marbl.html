@@ -391,7 +391,7 @@
      * COORDINATES: Y is up, levels stack downward (negative Y), camera looks from above
      */
 
-    const GAME_VERSION = 'v0.114f';
+    const GAME_VERSION = 'v0.115';
 
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     // XR-capable devices (like Quest) should use desktop-class rendering quality
@@ -412,7 +412,7 @@
     // VR scaling: board is ~920 units, want ~0.45m in VR
     const VR_WORLD_SCALE = 0.00049;
     // Position board at table height (0.75m from floor), centered in front
-    let VR_BOARD_OFFSET = { x: 0, y: 0.75, z: -0.5 }; // 50cm in front, at table height
+    let VR_BOARD_OFFSET = { x: 0, y: 1.22, z: -0.5 }; // 50cm in front, at 4 feet height
     const VR_HEIGHT_STEP = 0.0254; // 1 inch in meters
 
     // VR controller input
@@ -1298,7 +1298,7 @@
       }
       return arr;
     })();
-    const levelDrop = plane.w;
+    const levelDrop = plane.w / 2;
     const collapseConfig = { speed: 0.5 };
     const approachFadeDepth = levelDrop * 0.65;
     const centralHoleRadius = pedestalFootprint * 1.05;
